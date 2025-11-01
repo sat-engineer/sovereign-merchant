@@ -114,7 +114,7 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 3. **Storage Layer**
 
    * SQLite database under `/data/config.db`.
-   * Stores BTCPay URL + key (encrypted), BTCPay webhook secret (encrypted), QBO tokens (encrypted), reconciliation mode, API key (hashed), logs, QBO-first invoice mappings (BTCPay invoice ID → QBO invoice ID for reconciliation), and processed webhook event IDs (for idempotency).
+   * Stores BTCPay URL + key (encrypted), BTCPay webhook secret + webhook ID (encrypted/plaintext respectively), QBO tokens (encrypted), reconciliation mode, API key (hashed), logs, QBO-first invoice mappings (BTCPay invoice ID → QBO invoice ID for reconciliation), and processed webhook event IDs (for idempotency).
    * Encryption key stored separately (see Section 6.1) in platform secrets or `/data/encryption.key`.
    * Data directory exposed as a Docker volume for persistence.
    * **Concurrency:** SQLite handles concurrent reads/writes via WAL mode (Write-Ahead Logging). API server writes events, worker reads and processes them.
@@ -182,7 +182,7 @@ sovereign-merchants/
 
 * **API authentication:** All API endpoints (except `/healthz`, `/api/config/qbo/callback`, and one-time `/api/config/api-key/initial`) require API key authentication. API key is auto-generated on first install (cryptographically random, 32-byte hex string), stored hashed (SHA-256) in database, and must be provided in `Authorization: Bearer <key>` header or `?apiKey=<key>` query parameter. Frontend stores API key in localStorage after successful authentication. Keys can be rotated via settings UI. Failed authentication attempts are rate-limited (10 attempts per IP per minute).
 * **Sensitive data encryption:** BTCPay API keys and QuickBooks OAuth tokens (access + refresh) are encrypted at rest using AES-256-GCM. See Section 6.1 for encryption key management details.
-* **HMAC secret management:** QBO-first payment links use HMAC signatures. Secret is auto-generated on first install (32-byte random), stored encrypted alongside encryption key (Section 6.1), and rotated via API key rotation (same lifecycle). See Section 18 for payment link security.
+* **HMAC secret management:** QBO-first payment links use HMAC signatures. Secret is auto-generated on first install (32-byte random), stored encrypted alongside encryption key (Section 6.1), and rotated whenever the API key is rotated. The rotation flow issues a new secret, updates the BTCPay webhook registration, and persists the encrypted secret + webhook metadata. See Section 18 for payment link security.
 * **HTTPS enforced:** fallback to HTTP only if self-hosted/localnet.
 * **OAuth CSRF protection:** All OAuth flows use `state` parameter validation. Server generates cryptographically random state tokens, stores them with short expiry (10 minutes), and validates on callback to prevent cross-site request forgery attacks.
 * **Logs rotated:** capped log size to prevent disk growth.
@@ -372,8 +372,13 @@ Base URL: `/api`
    * **Purpose:** generate a new API key, invalidating the old one.
    * **Body:** `{ "currentKey": "..." }` (optional validation)
    * **Returns:** `{ "apiKey": "new-abc123..." }` (plaintext, shown once)
-   * **Action:** generates new key, hashes and stores it, returns plaintext once. Frontend must update localStorage immediately.
-   * **Security:** Requires valid API key authentication (uses old key to authorize the rotation).
+   * **Action:** 
+     1. Validates current API key (if provided) and existing session auth.
+     2. Generates a new API key, hashes and stores it.
+     3. Generates a new BTCPay webhook HMAC secret (32-byte random), encrypts and stores it.
+     4. Calls BTCPay Greenfield `PUT /api/v1/stores/{storeId}/webhooks/{webhookId}` to update the webhook secret (falls back to re-registering the webhook if update fails).
+     5. Returns the new API key (plaintext once); webhook secret is never returned via API.
+   * **Security:** Requires valid API key authentication (uses old key to authorize the rotation). Ensures BTCPay immediately uses the fresh secret so there is no window where webhooks are signed with stale credentials.
 
 11. `GET /pay?q=...&sig=...` (public endpoint, no API key required)
 
@@ -545,6 +550,9 @@ Docs: https://docs.btcpayserver.org/API/Greenfield/v1/
 
 - `POST /api/v1/stores/{storeId}/webhooks`  
   to register webhook endpoint with BTCPayServer during configuration.
+
+- `PUT /api/v1/stores/{storeId}/webhooks/{webhookId}`  
+  to rotate the webhook secret during API key rotation (falls back to re-register if the update fails).
 
 - `GET /api/v1/stores/{storeId}/webhooks`  
   to list existing webhooks and verify registration.
