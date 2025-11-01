@@ -254,7 +254,7 @@ sovereign-merchants/
 **Use case:** Merchants create invoices directly in BTCPay and want payments auto-synced to QuickBooks.
 
 1. **BTCPay invoice/payment event** (on-chain, confirmed) triggers a webhook to Sovereign Merchants.
-2. **Sovereign Merchants webhook handler** receives the event in real-time and processes it immediately.
+2. **Sovereign Merchants webhook handler** receives the event in real-time (`InvoiceSettled` and incremental `InvoicePaymentSettled` updates) and processes it immediately.
 3. For each new payment event, the worker formats a **BTCQBO-compatible request** and calls the BTCQBO plugin endpoint running inside BTCPay.
 4. **BTCQBO plugin** uses the stored QuickBooks OAuth credentials to create/update the appropriate objects in QBO (depending on mode: Deposit vs Invoicing).
 5. **Sovereign Merchants** records the outcome (success/failure, QBO object id if available) in SQLite and exposes it to the UI.
@@ -269,7 +269,7 @@ sovereign-merchants/
 3. **Sovereign Merchants validates link** → Verifies HMAC signature, fetches invoice details from QBO, confirms invoice status and amount.
 4. **Sovereign Merchants creates BTCPay invoice** → Creates short-lived BTCPay invoice (30-minute expiry) with current BTC rate for the USD amount.
 5. **Customer redirected to BTCPay** → Pays on BTCPay payment page.
-6. **Sovereign Merchants webhook handler** → Receives webhook event for settled BTCPay invoice (same real-time mechanism as 7.1).
+6. **Sovereign Merchants webhook handler** → Receives webhook events for the BTCPay invoice (partial updates via `InvoicePaymentSettled`, final pass via `InvoiceSettled`) using the same real-time mechanism as 7.1.
 7. **Reconciliation** → Worker calls BTCQBO to mark the original QBO invoice as paid (using the QBO invoice ID stored during step 3).
 8. UI shows: QBO invoice → Payment link clicked → BTCPay invoice created → Payment settled → QBO invoice marked paid.
 
@@ -407,21 +407,21 @@ Base URL: `/api`
 14. `POST /webhooks/btcpay` (public endpoint, no API key required)
 
    * **Purpose:** Webhook endpoint for BTCPayServer invoice/payment events.
-   * **Security:** Validates webhook signature using BTCPay's webhook secret (stored encrypted during BTCPay configuration).
-   * **Events handled:**
-     - `InvoiceSettled` - Invoice status changed to "Settled" (all payments confirmed; may be full or partial payment)
-     - `InvoiceExpired` - Invoice expired due to timeout (no reconciliation)
-     - `InvoiceInvalid` - Invoice invalidated (marked invalid; no reconciliation)
-   * **Events NOT handled (explicitly ignored):**
-     - `InvoiceReceivedPayment` - Fires for unconfirmed payments; we wait for `InvoiceSettled` instead
-     - `InvoicePaymentSettled` - Individual payment confirmed; redundant since `InvoiceSettled` fires when invoice is settled
-     - `InvoiceCreated` - Not relevant for reconciliation (only process when settled)
-   * **Action:**
+  * **Security:** Validates webhook signature using BTCPay's webhook secret (stored encrypted during BTCPay configuration).
+  * **Events handled:**
+    - `InvoiceSettled` — Invoice status changed to "Settled" (all payments confirmed; triggers final reconciliation).
+    - `InvoicePaymentSettled` — A single payment confirmed on an invoice that has not fully settled (lets us capture partial/late payments before expiry).
+    - `InvoiceExpired` — BTCPay auto-expired the invoice because the countdown ended. We still inspect `additionalStatus` (e.g., `PaidPartial`, `PaidLate`) and persist whatever value the customer sent.
+    - `InvoiceInvalid` — Merchant/admin explicitly marked the invoice invalid. No further payments should be accepted, so we only log the terminal state (no reconciliation).
+  * **Events NOT handled (explicitly ignored):**
+    - `InvoiceReceivedPayment` — Fires for unconfirmed payments; we wait for confirmation before recording anything.
+    - `InvoiceCreated` — Not relevant for reconciliation (no payment yet).
+  * **Action:**
      1. Validates HMAC signature from BTCPay
      2. Extracts invoice ID and event type from webhook payload
      3. Fetches full invoice details from BTCPay API if needed
      4. Processes payment reconciliation (see Section 12.3)
-   * **Returns:** `200 OK` immediately (async processing)
+  * **Returns:** `200 OK` immediately (async processing)
    * **Idempotency:** Uses BTCPay event ID to prevent duplicate processing
 
 ---
@@ -560,6 +560,7 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
   "invoiceId": "ABCD1234",
   "storeId": "STORE123",
   "status": "Settled",
+  "additionalStatus": "PaidPartial",
   "invoiceAmountBtc": 0.0025,
   "invoiceAmountUsd": 168.32,
   "paidAmountBtc": 0.0025,
@@ -598,6 +599,7 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
 - If BTCPay doesn't return a fiat amount, we query the invoice detail to get the original price and currency from BTCPay's internal model.
 - We store `rateSource` so we know where we got the number from if someone later changes store settings.
 - Each payment in the `payments` array tracks individual transactions (customer may send multiple payments).
+- `additionalStatus` mirrors BTCPay's additional invoice status so we can surface `PaidPartial`, `PaidLate`, or other terminal reasons in the UI.
 
 12.3 Sync Logic (Webhook-Based)
 
@@ -606,19 +608,21 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
 1. **BTCPay webhook received** → Validates HMAC signature using stored webhook secret.
 2. **Extract event data:**
    * Invoice ID from webhook payload
-   * Event type (`InvoiceSettled`, `InvoiceExpired`, `InvoiceInvalid`)
-   * Timestamp and event metadata
-3. **For `InvoiceSettled` events only** (skip reconciliation for `InvoiceExpired`/`InvoiceInvalid`):
-   * Fetch invoice details from BTCPay API (if not already in webhook payload)
-   * Fetch all payments via `/api/v1/stores/{storeId}/invoices/{invoiceId}/payments`
-   * **Note:** When invoice status is "Settled", all payments are already confirmed, so no need to filter
-   * Calculate `paidAmountBtc` = sum of all payment amounts
-   * Calculate `paidAmountUsd` = sum of all payment amounts converted to USD at invoice rate
-   * Determine `reconciliationStatus`:
-     - If `paidAmountUsd >= invoiceAmountUsd * 0.99` and `paidAmountUsd <= invoiceAmountUsd * 1.01` (within 1% tolerance for exchange rate drift and rounding) → `full`
-     - If `paidAmountUsd < invoiceAmountUsd * 0.99` → `partial`
-     - If `paidAmountUsd > invoiceAmountUsd * 1.01` → `overpaid`
-   * Store/update payment data in local database
+   * Event type (`InvoiceSettled`, `InvoicePaymentSettled`, `InvoiceExpired`, `InvoiceInvalid`)
+   * Timestamp, `additionalStatus`, and event metadata
+3. **Fetch invoice + payments** (for all events except `InvoiceInvalid`, which we only log):
+   * Always pull the latest invoice snapshot and payment list so we can aggregate confirmed payments, even if the invoice expired.
+   * Calculate `paidAmountBtc`/`paidAmountUsd` from confirmed payments (`status === Settled` at the payment level).
+   * Determine derived reconciliation status:
+     - If invoice `status === Settled` and `paidAmountUsd` within ±1% of `invoiceAmountUsd` → `full`
+     - If invoice not settled and `paidAmountUsd < invoiceAmountUsd * 0.99` → `partial`
+     - If aggregate exceeds `invoiceAmountUsd * 1.01` → `overpaid` (may happen with late settlements)
+4. **Event-specific handling:**
+   * `InvoiceSettled` → Run reconciliation immediately with the aggregated amounts (final pass).
+   * `InvoicePaymentSettled` → Reconcile incrementally using the updated aggregate. This unlocks partial/late payment handling before the invoice ever reaches "Settled".
+   * `InvoiceExpired` with `additionalStatus` of `PaidPartial` or `PaidLate` → Persist the partial payment and issue reconciliation if we have not already processed the aggregate amount.
+   * `InvoiceExpired`/`InvoiceInvalid` with no paid amount → Mark invoice as `invalidated` and skip reconciliation.
+5. **Store/update payment data** in local database, including the most recent `additionalStatus` and last processed payment ID.
 
 **Reconciliation Rules by Mode:**
 
@@ -643,7 +647,7 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
 **Multiple Payments Handling:**
 - Track all payments in the `payments` array (customer may send multiple transactions)
 - Aggregate amounts across all confirmed payments
-- Reconcile incrementally: if invoice was `partial` and new payment arrives, update QBO with additional amount
+- Reconcile incrementally: every `InvoicePaymentSettled` update recalculates the aggregate so QBO reflects additional payments even if the invoice never reaches `Settled`
 - Only reconcile once per invoice unless status changes (use idempotency to prevent duplicate QBO entries)
 
 **Reconciliation Execution:**
@@ -660,10 +664,11 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
 - Only processes invoices not already reconciled (idempotent)
 
 **Edge Cases:**
-- `InvoiceExpired` event: Mark as `invalidated`, log but don't reconcile (invoice never paid)
-- `InvoiceInvalid` event: Mark as `invalidated`, log but don't reconcile (invoice was invalidated)
-- If invoice was already reconciled and then invalidated: Future enhancement may reverse QBO entry
-- If payment is refunded in BTCPay: BTCPay may send status change event (future: handle refund reconciliation)
+- `InvoiceExpired` event with no confirmed payments: Auto-expiry with no value received — mark as `invalidated`, log but don't reconcile.
+- `InvoiceExpired` event with `additionalStatus=PaidPartial` or `PaidLate`: Persist partial aggregate, run reconciliation if not already done, and surface the terminal status in the UI.
+- `InvoiceInvalid` event: Merchant/admin manually cancelled the invoice in BTCPay; mark as `invalidated`, log but don't reconcile (no further payments should be accepted).
+- If invoice was already reconciled and then invalidated: Future enhancement may reverse QBO entry.
+- If payment is refunded in BTCPay: BTCPay may send status change event (future: handle refund reconciliation).
 
 ⸻
 
@@ -733,6 +738,7 @@ Overpaid payment payload:
 - Overpayments: For deposit mode, create deposit for full invoice amount only; log overpayment separately
 - Overpayments: For invoicing/qbo-first modes, mark invoice as paid in full; log overpayment for credit/refund handling
 - Status is determined immediately when invoice is processed (no intermediate pending state)
+- Include BTCPay `additionalStatus` when present so support can see if a payment was late/partial even after expiry
 
 ⸻
 
