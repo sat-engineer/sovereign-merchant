@@ -40,11 +40,12 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 ### 3.1 Install Flow
 
 1. User installs from the platform app store.
-2. App starts with a welcome screen.
-3. Detect or request BTCPay URL + API key.
-4. Click **“Connect QuickBooks”** → OAuth2 popup → confirmation.
-5. Choose reconciliation mode (Deposit or Invoicing).
-6. Confirmation screen shows sync summary and logs.
+2. App starts with a welcome screen. Backend auto-generates API key on first startup.
+3. Frontend fetches initial API key from `/api/config/api-key/initial` (one-time, no auth required) and stores it in localStorage.
+4. Detect or request BTCPay URL + API key.
+5. Click **"Connect QuickBooks"** → OAuth2 popup → confirmation.
+6. Choose reconciliation mode (Deposit or Invoicing).
+7. Confirmation screen shows sync summary and logs.
 
 ### 3.2 Example UI Copy
 
@@ -94,7 +95,7 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 3. **Storage Layer**
 
    * SQLite database under `/data/config.db`.
-   * Stores BTCPay URL + key, QBO tokens, reconciliation mode, and logs.
+   * Stores BTCPay URL + key, QBO tokens, reconciliation mode, API key (hashed), and logs.
    * Data directory exposed as a Docker volume for persistence.
 
 4. **Health Endpoint**
@@ -157,6 +158,7 @@ sovereign-merchants/
 
 ## 6. Security & Resilience
 
+* **API authentication:** All API endpoints (except `/healthz`, `/api/config/qbo/callback`, and one-time `/api/config/api-key/initial`) require API key authentication. API key is auto-generated on first install (cryptographically random, 32-byte hex string), stored hashed (SHA-256) in database, and must be provided in `Authorization: Bearer <key>` header or `?apiKey=<key>` query parameter. Frontend stores API key in localStorage after successful authentication. Keys can be rotated via settings UI. Failed authentication attempts are rate-limited (10 attempts per IP per minute).
 * **API key encryption:** BTCPay + QBO tokens encrypted at rest with local key.
 * **HTTPS enforced:** fallback to HTTP only if self-hosted/localnet.
 * **OAuth CSRF protection:** All OAuth flows use `state` parameter validation. Server generates cryptographically random state tokens, stores them with short expiry (10 minutes), and validates on callback to prevent cross-site request forgery attacks.
@@ -187,6 +189,15 @@ sovereign-merchants/
 ## 8. API Schema & Routes (Backend → Frontend)
 
 Base URL: `/api`
+
+**Authentication:** All `/api/*` endpoints except `/api/config/qbo/callback` and `/api/config/api-key/initial` require API key authentication. The API key must be provided in the `Authorization` header as `Bearer <api-key>` or as a query parameter `?apiKey=<api-key>`. The API key is auto-generated on first install and stored hashed in the database. It can be rotated via the settings UI. The frontend stores the API key in localStorage after first successful authentication.
+
+**Authentication Errors:** Invalid or missing API keys result in `401 Unauthorized` response with `{ "error": "Invalid or missing API key" }`. Failed authentication attempts are rate-limited (max 10 attempts per IP per minute) to prevent brute force attacks.
+
+**Public Endpoints:**
+- `GET /healthz` - platform health checks (no auth required)
+- `GET /api/config/api-key/initial` - initial API key retrieval (one-time only, no auth required)
+- `GET /api/config/qbo/callback` - OAuth callback (protected by state validation, no API key required)
 
 1. `GET /api/status`
 
@@ -241,6 +252,21 @@ Base URL: `/api`
 8. `GET /api/logs?limit=50`
 
    * **Action:** return latest N logs for support (for Blake).
+
+9. `GET /api/config/api-key/initial` (no auth required, time-limited)
+
+   * **Purpose:** retrieve the auto-generated API key on first install. Only works within the first 10 minutes after app installation (or until an API key has been used successfully in a request). After this window, users must use the API key rotation endpoint (which requires authentication) or reinstall the app.
+   * **Returns:** `{ "apiKey": "abc123..." }` (plaintext, shown once per request)
+   * **Security:** Time-limited to prevent indefinite access without proper authentication. Frontend should immediately store the key in localStorage and use it for all subsequent requests. After 10 minutes or first authenticated request, this endpoint returns 403.
+   * **Recovery:** If API key is lost after the initial window, users with console/SSH access can reset it directly in the database, or the app can be reinstalled. Future versions may include a recovery token system.
+
+10. `POST /api/config/api-key/rotate`
+
+   * **Purpose:** generate a new API key, invalidating the old one.
+   * **Body:** `{ "currentKey": "..." }` (optional validation)
+   * **Returns:** `{ "apiKey": "new-abc123..." }` (plaintext, shown once)
+   * **Action:** generates new key, hashes and stores it, returns plaintext once. Frontend must update localStorage immediately.
+   * **Security:** Requires valid API key authentication (uses old key to authorize the rotation).
 
 ---
 
