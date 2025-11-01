@@ -209,21 +209,147 @@ No mention of:
 10. Improve setup UX (#14, #15)
 11. Add store selection (#22)
 
-This is a solid foundation. Addressing the security items (#1-4) is essential before release.
+----
 
-extra safety: make webhooks fire-and-forget
+Looking through this comprehensive spec, here are the gaps I'd flag for a v1 release:
 
-super important: /webhooks/btcpay should never do the real work.
+## Critical Missing Items
 
-why?
-	•	BTCPay expects fast 200
-	•	if QBO is slow, you don’t want BTCPay to retry and send dupes
-	•	you already have idempotency in the worker
+### 1. **BTCQBO Plugin Verification**
+- No check during setup to verify BTCQBO plugin is actually installed in BTCPay
+- What's the error message if it's missing?
+- Should you include installation instructions or auto-detect and warn?
 
-Findings
+### 2. **QBO Account Mapping Configuration**
+- **Deposit mode** creates deposits but doesn't specify WHICH QBO account
+- Need UI for merchant to select: deposit account, income account, Bitcoin asset account
+- Should have sensible defaults but allow customization
 
-- product-and-tech-spec.md:606 – Spec says we process only InvoiceSettled events and explicitly ignore InvoiceReceivedPayment / InvoicePaymentSettled. In BTCPay partial/underpaid invoices never reach Settled; they end as Expired with the PaidPartial additional status. As written we’ll miss every partial (and late) payment while the surrounding text claims partial reconciliation support.
+### 3. **Database Migrations**
+- Schema mentioned but no migration tool specified (knex? node-pg-migrate?)
+- How do schema changes work during updates?
 
-Resolved:
-- product-and-tech-spec.md:185 vs product-and-tech-spec.md:237 – Section 6 now lists the BTCPay webhook HMAC secret in the encrypted data set, matching the earlier statement.
-- product-and-tech-spec.md:185 vs product-and-tech-spec.md:369 – API key rotation flow now documents regenerating the webhook secret and updating BTCPay automatically.
+### 4. **Update/Upgrade Strategy**
+- How does `/data` volume persist during container updates on Start9/Umbrel?
+- Do you need migration scripts between versions?
+- How to handle breaking changes?
+
+### 5. **BTCPay Store Selection**
+- Auto-discovery mentions "detect BTCPay" but what if multiple stores exist?
+- Need UI to select which store to sync, or explicitly state "single store only for v1"
+
+### 6. **Webhook Delivery Failures**
+- What if Sovereign Merchant is down when BTCPay sends webhook?
+- Does BTCPay retry? For how long?
+- Should you query missed invoices on restart?
+
+## Important Gaps
+
+### 7. **Testing Strategy**
+- No mention of test coverage requirements
+- E2E testing approach for OAuth flows?
+- Mock BTCPay/QBO for CI/CD?
+
+### 8. **Rate Limiting**
+- Auth endpoint has limits, but what about:
+  - `/api/sync/now` (prevent sync spam)
+  - Webhook endpoint (prevent DoS)
+  - QBO API call limits (Intuit has daily quotas)
+
+### 9. **Observability**
+- Beyond `/healthz`, consider:
+  - Prometheus metrics endpoint
+  - Structured logging format (JSON?)
+  - Event tracking for analytics
+
+### 10. **Network/DNS Requirements**
+- Webhook URL must be reachable by BTCPay - how is this configured?
+- SSL/TLS requirements for production webhooks
+- Local network discovery details for Start9/Umbrel
+
+### 11. **Documentation Plan**
+- User manual (screenshots of setup flow)
+- Troubleshooting guide (common errors)
+- API documentation (OpenAPI spec?)
+- Operator runbook for Blake
+
+### 12. **Currency Support Scope**
+- Spec only shows USD examples
+- BTCPay supports many currencies - is this USD-only for v1?
+- Should explicitly state limitation
+
+## Nice-to-Haves (Consider for v1)
+
+### 13. **First-Run Tutorial/Tooltips**
+- Onboarding wizard with explanations
+- Contextual help for each setup step
+- Link to video walkthrough
+
+### 14. **Diagnostic Export**
+- "Download debug bundle" button for support
+- Sanitized logs + config (no secrets)
+- System info (BTCPay version, QBO connection status)
+
+### 15. **Concurrent Operations**
+- Race condition handling: webhook + manual sync + periodic sync
+- Database locking strategy (SQLite WAL mode mentioned, good)
+- Idempotency key format should be specified exactly
+
+### 16. **Customer Notification Handling**
+- Who sends the "payment received" email?
+- Does Sovereign Merchant send any notifications?
+- Should integrate with BTCPay's email settings?
+
+### 17. **Start9/Umbrel Specifics**
+```yaml
+# Missing from apps/ folders:
+- Health check interval/timeout values
+- Resource limits (memory, CPU)
+- Dependency declarations (BTCPayServer)
+- Backup include/exclude paths
+- Port mappings and conflicts
+```
+
+### 18. **Session Security**
+- API key in localStorage has no expiration
+- Consider: session timeout, "keep me signed in" option
+- Security best practice: warn about shared computers
+
+## Questions to Resolve
+
+1. **BTCQBO endpoint URL** - You mention calling `/plugins/btcqbo/...` but what's the exact endpoint? Is this documented?
+
+2. **QBO webhook support** - Section 7.2 mentions "QBO can only deliver invoice events" but QBO webhooks aren't implemented anywhere. Do you need QBO webhooks or is polling sufficient?
+
+3. **Bitcoin address reuse** - Each BTCPay invoice gets unique address. Any privacy considerations to document?
+
+4. **Sandbox detection** - You mention detecting sandbox realmIds follow "known patterns" - what are these patterns?
+
+5. **Multi-payment reconciliation** - If customer sends 2 transactions before first confirms, how do you handle the race?
+
+## Suggested Additions
+
+### Section 19: **Testing & Quality Assurance**
+- Unit test coverage target (80%?)
+- Integration test scenarios
+- Manual QA checklist before release
+
+### Section 20: **Deployment Checklist**
+- Pre-flight checks before packaging
+- Smoke test procedures
+- Rollback plan
+
+### Section 21: **Support & Maintenance**
+- How Blake reports issues
+- Telemetry/crash reporting (opt-in?)
+- Update notification strategy
+
+## Overall Assessment
+
+The spec is **very thorough** and well-structured. The main gaps are around:
+1. **Operational concerns** (updates, backups, monitoring)
+2. **QBO configuration details** (account mapping is critical)
+3. **BTCQBO integration specifics** (endpoint URLs, error codes)
+4. **Edge case handling** (multiple stores, concurrent operations)
+
+This is solid for v1 if you address the critical items. The nice-to-haves can wait for v1.1.
