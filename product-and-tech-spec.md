@@ -95,7 +95,8 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 3. **Storage Layer**
 
    * SQLite database under `/data/config.db`.
-   * Stores BTCPay URL + key, QBO tokens, reconciliation mode, API key (hashed), and logs.
+   * Stores BTCPay URL + key (encrypted), QBO tokens (encrypted), reconciliation mode, API key (hashed), and logs.
+   * Encryption key stored separately (see Section 6.1) in platform secrets or `/data/encryption.key`.
    * Data directory exposed as a Docker volume for persistence.
 
 4. **Health Endpoint**
@@ -159,12 +160,68 @@ sovereign-merchants/
 ## 6. Security & Resilience
 
 * **API authentication:** All API endpoints (except `/healthz`, `/api/config/qbo/callback`, and one-time `/api/config/api-key/initial`) require API key authentication. API key is auto-generated on first install (cryptographically random, 32-byte hex string), stored hashed (SHA-256) in database, and must be provided in `Authorization: Bearer <key>` header or `?apiKey=<key>` query parameter. Frontend stores API key in localStorage after successful authentication. Keys can be rotated via settings UI. Failed authentication attempts are rate-limited (10 attempts per IP per minute).
-* **API key encryption:** BTCPay + QBO tokens encrypted at rest with local key.
+* **Sensitive data encryption:** BTCPay API keys and QuickBooks OAuth tokens (access + refresh) are encrypted at rest using AES-256-GCM. See Section 6.1 for encryption key management details.
 * **HTTPS enforced:** fallback to HTTP only if self-hosted/localnet.
 * **OAuth CSRF protection:** All OAuth flows use `state` parameter validation. Server generates cryptographically random state tokens, stores them with short expiry (10 minutes), and validates on callback to prevent cross-site request forgery attacks.
 * **Logs rotated:** capped log size to prevent disk growth.
-* **Config export/import:** JSON backup file for migration or node restore.
+* **Config export/import:** JSON backup file for migration or node restore. Exports include encrypted data (BTCPay keys, QBO tokens) but NOT the encryption key itself. The encryption key must be backed up separately (see Section 6.1). Imports require the encryption key to be present on the target system to decrypt the data.
 * **Auto health checks:** fail-fast `/healthz` endpoint to trigger restarts.
+
+### 6.1 Encryption Key Management
+
+**Purpose:** Secure storage of encryption key used to encrypt sensitive data (BTCPay API keys, QBO tokens) in the database.
+
+**Key Generation:**
+1. On first app startup, generate a cryptographically random 32-byte (256-bit) master encryption key using a secure random number generator (e.g., Node.js `crypto.randomBytes`).
+2. The key is generated once per installation and must persist across container restarts.
+
+**Key Storage Strategy (Priority Order):**
+
+1. **Platform Secrets Management (Preferred)**
+   * **Start9:** Store the encryption key in Start9's secrets service (accessible via `$SERVICES_SECRET_FILE` or Start9 secrets API).
+   * **Umbrel:** Store the encryption key in Umbrel's app data secrets directory (`/umbrel/app-data/sovereign-merchant/secrets/` or equivalent).
+   * If platform secrets are available, read the key at startup and keep it in memory only (never log or expose).
+
+2. **Fallback: Encrypted Key File**
+   * If platform secrets are unavailable, store the key in `/data/encryption.key` with file permissions `0600` (owner read/write only).
+   * For additional security, the key file itself can be encrypted using a platform-provided secret or user passphrase (future enhancement).
+   * The file must be backed up with the database for data recovery.
+
+3. **Environment Variable (Development Only)**
+   * Allow `ENCRYPTION_KEY` environment variable for local development/testing.
+   * Production deployments should never use this method.
+
+**Key Persistence:**
+* The encryption key must survive container restarts and updates.
+* If the key is lost, all encrypted data becomes unrecoverable (by design, for security).
+* **Backup and Migration:** 
+  * The encryption key must be backed up separately from the database.
+  * For `/data/encryption.key` fallback: Include the key file in backups of the `/data` directory.
+  * For platform secrets: Use platform backup mechanisms (Start9/Umbrel backup includes secrets).
+  * When migrating to a new node: Both the database AND the encryption key must be copied to maintain data accessibility.
+  * Config export/import (Section 6) does NOT include the encryption key; it must be handled separately.
+
+**Key Rotation:**
+* Key rotation is not supported in v1 (requires re-encryption of all data).
+* Future versions may support key rotation with data re-encryption.
+
+**Security Properties:**
+* Key never stored in plaintext in the database.
+* Key never exposed via API endpoints.
+* Key only exists in memory during runtime (loaded from secure storage at startup).
+* Key file permissions restrict access to the container process only.
+* If key file is missing on startup, app should fail fast with clear error message (prevents accidental data loss).
+
+**Data Encrypted:**
+* BTCPay Server API keys (stored in `config` table)
+* QuickBooks OAuth access tokens (stored in `qbo_tokens` table)
+* QuickBooks OAuth refresh tokens (stored in `qbo_tokens` table)
+
+**Data NOT Encrypted (stored in plaintext):**
+* BTCPay Server URL (not sensitive)
+* Reconciliation mode settings (not sensitive)
+* Sync state metadata (not sensitive)
+* Logs (may contain non-sensitive operational data)
 
 ---
 
@@ -484,6 +541,7 @@ QBO_CLIENT_ID=...
 QBO_CLIENT_SECRET=...
 QBO_REDIRECT_URI=http://localhost:3000/api/config/qbo/callback
 BTCPAY_BASE_URL=http://localhost:8080
+ENCRYPTION_KEY=... (optional, for local dev only; if not set, will generate and store in /data/encryption.key)
 
 
 	6.	docker build:
