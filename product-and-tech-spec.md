@@ -83,20 +83,33 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 
 ### 4.2 Service Components
 
-1. **Core API Server (Express or Fastify)**
+**Architecture:** API Server and Sync Worker run as separate processes/services, sharing the same SQLite database via `/data` volume.
 
-   * Serves REST API endpoints (`/api/config`, `/api/sync`, `/api/status`).
-   * Hosts compiled frontend under `/`.
-   * Handles QuickBooks OAuth2 and token management.
-   * Manages scheduled sync job.
+1. **API Server (Express or Fastify)**
 
-2. **Sync Worker**
+   * **Purpose:** Handles all HTTP requests (API endpoints, frontend, webhooks).
+   * **Responsibilities:**
+     - Serves REST API endpoints (`/api/config`, `/api/status`, `/api/sync/now`)
+     - Hosts compiled frontend under `/` (static files)
+     - Handles QuickBooks OAuth2 and token management
+     - Receives BTCPay webhooks at `/webhooks/btcpay` and enqueues them for worker processing
+     - Provides health checks (`/healthz`)
+   * **Port:** Exposes single HTTP port (e.g., 3000)
+   * **Resilience:** If worker crashes, API continues serving requests (just can't process sync jobs)
 
-   * Runs in the same Node process.
-   * Receives webhooks from BTCPayServer for invoice/payment events.
-   * Processes webhook events in real-time → reconciles via BTCQBO.
-   * Logs status, errors, and summary metrics.
-   * Also provides fallback periodic sync for missed webhooks (optional, configurable).
+2. **Sync Worker Service**
+
+   * **Purpose:** Processes reconciliation jobs independently from API server.
+   * **Responsibilities:**
+     - Consumes webhook events from queue (written by API server)
+     - Processes payment reconciliation logic (fetches BTCPay data, calls BTCQBO)
+     - Handles fallback periodic sync for missed webhooks (optional, configurable)
+     - Logs reconciliation status, errors, and metrics to shared database
+   * **Communication:** 
+     - Reads from shared SQLite database (webhook event queue table)
+     - Writes reconciliation results to shared database
+     - No direct HTTP endpoint (internal service)
+   * **Resilience:** If API server crashes, worker continues processing queue (webhooks may be missed if API is down)
 
 3. **Storage Layer**
 
@@ -104,6 +117,7 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
    * Stores BTCPay URL + key (encrypted), BTCPay webhook secret (encrypted), QBO tokens (encrypted), reconciliation mode, API key (hashed), logs, QBO-first invoice mappings (BTCPay invoice ID → QBO invoice ID for reconciliation), and processed webhook event IDs (for idempotency).
    * Encryption key stored separately (see Section 6.1) in platform secrets or `/data/encryption.key`.
    * Data directory exposed as a Docker volume for persistence.
+   * **Concurrency:** SQLite handles concurrent reads/writes via WAL mode (Write-Ahead Logging). API server writes events, worker reads and processes them.
 
 4. **Health Endpoint**
 
