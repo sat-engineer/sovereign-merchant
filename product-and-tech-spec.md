@@ -93,13 +93,15 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 2. **Sync Worker**
 
    * Runs in the same Node process.
-   * Interval task (e.g., every 60s) → fetches BTCPay invoices → reconciles via BTCQBO.
+   * Receives webhooks from BTCPayServer for invoice/payment events.
+   * Processes webhook events in real-time → reconciles via BTCQBO.
    * Logs status, errors, and summary metrics.
+   * Also provides fallback periodic sync for missed webhooks (optional, configurable).
 
 3. **Storage Layer**
 
    * SQLite database under `/data/config.db`.
-   * Stores BTCPay URL + key (encrypted), QBO tokens (encrypted), reconciliation mode, API key (hashed), logs, and QBO-first invoice mappings (BTCPay invoice ID → QBO invoice ID for reconciliation).
+   * Stores BTCPay URL + key (encrypted), BTCPay webhook secret (encrypted), QBO tokens (encrypted), reconciliation mode, API key (hashed), logs, QBO-first invoice mappings (BTCPay invoice ID → QBO invoice ID for reconciliation), and processed webhook event IDs (for idempotency).
    * Encryption key stored separately (see Section 6.1) in platform secrets or `/data/encryption.key`.
    * Data directory exposed as a Docker volume for persistence.
 
@@ -237,9 +239,9 @@ sovereign-merchants/
 
 **Use case:** Merchants create invoices directly in BTCPay and want payments auto-synced to QuickBooks.
 
-1. **BTCPay invoice/payment event** (on-chain, confirmed) becomes available through BTCPay's Greenfield API.
-2. **Sovereign Merchants sync worker** (Node) polls BTCPay every 60s (configurable) for **invoices/payments since `lastSyncAt`**.
-3. For each new payment, the worker formats a **BTCQBO-compatible request** and calls the BTCQBO plugin endpoint running inside BTCPay.
+1. **BTCPay invoice/payment event** (on-chain, confirmed) triggers a webhook to Sovereign Merchants.
+2. **Sovereign Merchants webhook handler** receives the event in real-time and processes it immediately.
+3. For each new payment event, the worker formats a **BTCQBO-compatible request** and calls the BTCQBO plugin endpoint running inside BTCPay.
 4. **BTCQBO plugin** uses the stored QuickBooks OAuth credentials to create/update the appropriate objects in QBO (depending on mode: Deposit vs Invoicing).
 5. **Sovereign Merchants** records the outcome (success/failure, QBO object id if available) in SQLite and exposes it to the UI.
 6. UI shows a chronological list: BTCPay invoice → BTCQBO call → QBO success.
@@ -253,7 +255,7 @@ sovereign-merchants/
 3. **Sovereign Merchants validates link** → Verifies HMAC signature, fetches invoice details from QBO, confirms invoice status and amount.
 4. **Sovereign Merchants creates BTCPay invoice** → Creates short-lived BTCPay invoice (30-minute expiry) with current BTC rate for the USD amount.
 5. **Customer redirected to BTCPay** → Pays on BTCPay payment page.
-6. **Sovereign Merchants sync worker** → Detects settled BTCPay invoice (same polling mechanism as 7.1).
+6. **Sovereign Merchants webhook handler** → Receives webhook event for settled BTCPay invoice (same real-time mechanism as 7.1).
 7. **Reconciliation** → Worker calls BTCQBO to mark the original QBO invoice as paid (using the QBO invoice ID stored during step 3).
 8. UI shows: QBO invoice → Payment link clicked → BTCPay invoice created → Payment settled → QBO invoice marked paid.
 
@@ -280,6 +282,7 @@ Base URL: `/api`
 - `GET /api/config/api-key/initial` - initial API key retrieval (one-time only, no auth required)
 - `GET /api/config/qbo/callback` - OAuth callback (protected by state validation, no API key required)
 - `GET /pay?q=...&sig=...` - QBO-first payment link handler (protected by HMAC signature, no API key required; see endpoint #11)
+- `POST /webhooks/btcpay` - BTCPay webhook handler (protected by BTCPay HMAC signature, no API key required; see endpoint #14)
 
 1. `GET /api/status`
 
@@ -297,9 +300,14 @@ Base URL: `/api`
 
 2. `POST /api/config/btcpay`
 
-   * **Body:** `{ "url": "https://btcpay.local", "apiKey": "..." }`
-   * **Action:** validates connectivity + stores encrypted.
-   * **Errors:** unreachable, 401 from BTCPay, BTCQBO plugin missing.
+   * **Body:** `{ "url": "https://btcpay.local", "apiKey": "...", "webhookSecret": "..." }`
+   * **Action:** 
+     - Validates connectivity
+     - Stores API key and webhook secret (encrypted)
+     - Registers webhook endpoint in BTCPayServer (if webhook doesn't exist, creates it)
+     - Webhook URL: `https://sovereign-merchant.local/webhooks/btcpay` (uses configured base URL)
+   * **Returns:** `{ "url": "...", "webhookRegistered": true, "webhookId": "..." }`
+   * **Errors:** unreachable, 401 from BTCPay, BTCQBO plugin missing, webhook registration failed.
 
 3. `GET /api/config/btcpay/auto-discover`
 
@@ -324,9 +332,10 @@ Base URL: `/api`
 
 6. `POST /api/config/reconciliation`
 
-   * **Body:** `{ "mode": "deposit" | "invoicing" | "qbo-first", "intervalSeconds": 60 }`
-   * **Action:** update local config and scheduler. Mode determines reconciliation behavior (see Section 7.3).
+   * **Body:** `{ "mode": "deposit" | "invoicing" | "qbo-first", "fallbackSyncEnabled": true, "fallbackSyncIntervalSeconds": 3600 }`
+   * **Action:** update local config. Mode determines reconciliation behavior (see Section 7.3).
    * **Note:** `qbo-first` mode enables dynamic invoice bridge functionality (Section 18).
+   * **Note:** `fallbackSyncEnabled` enables optional periodic sync to catch missed webhooks (default: true, runs every hour).
 
 7. `POST /api/sync/now`
 
@@ -380,6 +389,26 @@ Base URL: `/api`
    * **Purpose:** List BTCPay invoices that are pending payment for QBO invoices.
    * **Returns:** `{ "pending": [ { "btcpayInvoiceId": "...", "qboInvoiceId": "INV-12345", "amountUsd": 168.32, "createdAt": "...", "expiresAt": "..." } ] }`
    * **Action:** Returns list of BTCPay invoices created via QBO-first flow that are not yet settled.
+
+14. `POST /webhooks/btcpay` (public endpoint, no API key required)
+
+   * **Purpose:** Webhook endpoint for BTCPayServer invoice/payment events.
+   * **Security:** Validates webhook signature using BTCPay's webhook secret (stored encrypted during BTCPay configuration).
+   * **Events handled:**
+     - `InvoiceSettled` - Invoice status changed to "Settled" (all payments confirmed; may be full or partial payment)
+     - `InvoiceExpired` - Invoice expired due to timeout (no reconciliation)
+     - `InvoiceInvalid` - Invoice invalidated (marked invalid; no reconciliation)
+   * **Events NOT handled (explicitly ignored):**
+     - `InvoiceReceivedPayment` - Fires for unconfirmed payments; we wait for `InvoiceSettled` instead
+     - `InvoicePaymentSettled` - Individual payment confirmed; redundant since `InvoiceSettled` fires when invoice is settled
+     - `InvoiceCreated` - Not relevant for reconciliation (only process when settled)
+   * **Action:**
+     1. Validates HMAC signature from BTCPay
+     2. Extracts invoice ID and event type from webhook payload
+     3. Fetches full invoice details from BTCPay API if needed
+     4. Processes payment reconciliation (see Section 12.3)
+   * **Returns:** `200 OK` immediately (async processing)
+   * **Idempotency:** Uses BTCPay event ID to prevent duplicate processing
 
 ---
 
@@ -470,13 +499,11 @@ We can detect this in the callback: Intuit’s sandbox realmIds follow known pat
 1. Scaffold Node/TS backend (`core/`) with Express/Fastify and `/api/status`.
 2. Add SQLite + migration for `config`, `logs`, `sync_state`.
 3. Implement QBO OAuth endpoints (`/api/config/qbo/url`, `/api/config/qbo/callback`).
-4. Implement BTCPay discovery + manual config endpoints.
-5. Add sync worker (1-minute interval) and bind to config.
+4. Implement BTCPay discovery + manual config endpoints (including webhook registration).
+5. Add webhook handler for BTCPay events + optional fallback periodic sync worker.
 6. Build React UI with the setup state machine.
 7. Finish Start9 and Umbrel packaging under `apps/`.
 8. Write operator docs: “How to tell if it’s sandbox vs production” + “How to re-auth QBO.”
-
-perfect. here’s an append-only block you can drop at the very end of your current product-and-tech-spec.md — right after ## 11. Next Steps. it assumes everything up to section 11 is the version you liked.
 
 ---
 
@@ -493,10 +520,19 @@ Docs: https://docs.btcpayserver.org/API/Greenfield/v1/
   to verify the store exists and that the API key is valid.
 
 - `GET /api/v1/stores/{storeId}/invoices?status=Settled&offset=0&limit=50`  
-  to pull recently settled invoices (we can filter by date if needed).
+  for fallback periodic sync (only if webhooks are missed).
+
+- `GET /api/v1/stores/{storeId}/invoices/{invoiceId}`  
+  to fetch full invoice details when webhook is received.
 
 - `GET /api/v1/stores/{storeId}/invoices/{invoiceId}/payments`  
-  to get on-chain payment details (txid, amount, confirmations).
+  to get on-chain payment details (txid, amount, confirmations) when processing webhook events.
+
+- `POST /api/v1/stores/{storeId}/webhooks`  
+  to register webhook endpoint with BTCPayServer during configuration.
+
+- `GET /api/v1/stores/{storeId}/webhooks`  
+  to list existing webhooks and verify registration.
 
 - `GET /api/v1/server/info`  
   for a basic health/version check; we can surface this in the UI.
@@ -549,16 +585,21 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
 - We store `rateSource` so we know where we got the number from if someone later changes store settings.
 - Each payment in the `payments` array tracks individual transactions (customer may send multiple payments).
 
-12.3 Sync Logic
+12.3 Sync Logic (Webhook-Based)
 
-**Payment Detection and Aggregation:**
-1. Poll BTCPay every `intervalSeconds` (default: 60s).
-2. Fetch invoices newer than `lastSyncAt` with status == `Settled` (or check for status changes on existing invoices).
-3. For each invoice:
+**Primary: Real-Time Webhook Processing**
+
+1. **BTCPay webhook received** → Validates HMAC signature using stored webhook secret.
+2. **Extract event data:**
+   * Invoice ID from webhook payload
+   * Event type (`InvoiceSettled`, `InvoiceExpired`, `InvoiceInvalid`)
+   * Timestamp and event metadata
+3. **For `InvoiceSettled` events only** (skip reconciliation for `InvoiceExpired`/`InvoiceInvalid`):
+   * Fetch invoice details from BTCPay API (if not already in webhook payload)
    * Fetch all payments via `/api/v1/stores/{storeId}/invoices/{invoiceId}/payments`
-   * Filter to confirmed on-chain payments (confirmations >= 1, or use BTCPay's payment status)
-   * Calculate `paidAmountBtc` = sum of all confirmed payment amounts
-   * Calculate `paidAmountUsd` = sum of all confirmed payment amounts converted to USD at invoice rate
+   * **Note:** When invoice status is "Settled", all payments are already confirmed, so no need to filter
+   * Calculate `paidAmountBtc` = sum of all payment amounts
+   * Calculate `paidAmountUsd` = sum of all payment amounts converted to USD at invoice rate
    * Determine `reconciliationStatus`:
      - If `paidAmountUsd >= invoiceAmountUsd * 0.99` and `paidAmountUsd <= invoiceAmountUsd * 1.01` (within 1% tolerance for exchange rate drift and rounding) → `full`
      - If `paidAmountUsd < invoiceAmountUsd * 0.99` → `partial`
@@ -595,11 +636,20 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
 4. Build BTCQBO payload (see Section 13) with appropriate amount based on reconciliation status
 5. Call BTCQBO inside BTCPay at `/plugins/btcqbo/...` (pass `paidAmountUsd` for partial payments)
 6. Write success/failure + reconciliation details to SQLite
-7. Update `lastSyncAt` timestamp
+7. Mark webhook event as processed (prevents duplicate processing)
+
+**Fallback: Periodic Sync (Optional)**
+
+- If `fallbackSyncEnabled` is true, runs periodic sync every `fallbackSyncIntervalSeconds` (default: 3600s / 1 hour)
+- Purpose: Catch any missed webhooks (network issues, downtime, etc.)
+- Process: Fetch invoices with status == `Settled` since last processed timestamp
+- Only processes invoices not already reconciled (idempotent)
 
 **Edge Cases:**
-- If invoice status changes from `Settled` → `Invalid` or `Expired`, mark reconciliation as `invalidated` and log the change
-- If payment is refunded in BTCPay, detect status change and handle refund reconciliation (future: reverse QBO entry)
+- `InvoiceExpired` event: Mark as `invalidated`, log but don't reconcile (invoice never paid)
+- `InvoiceInvalid` event: Mark as `invalidated`, log but don't reconcile (invoice was invalidated)
+- If invoice was already reconciled and then invalidated: Future enhancement may reverse QBO entry
+- If payment is refunded in BTCPay: BTCPay may send status change event (future: handle refund reconciliation)
 
 ⸻
 
