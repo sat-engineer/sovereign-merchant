@@ -236,6 +236,7 @@ sovereign-merchants/
 
 **Data Encrypted:**
 * BTCPay Server API keys (stored in `config` table)
+* BTCPay webhook HMAC secret (stored in `config` table)
 * QuickBooks OAuth access tokens (stored in `qbo_tokens` table)
 * QuickBooks OAuth refresh tokens (stored in `qbo_tokens` table)
 

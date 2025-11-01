@@ -223,13 +223,8 @@ why?
 ---
 Findings
 
-product-and-tech-spec.md:606 – Spec says we process only InvoiceSettled events and explicitly ignore InvoiceReceivedPayment / InvoicePaymentSettled. In BTCPay partial/underpaid invoices never reach Settled; they end as Expired with the PaidPartial additional status. As written we’ll miss every partial (and late) payment while the surrounding text claims partial reconciliation support.
-
-product-and-tech-spec.md:185 vs product-and-tech-spec.md:237 – Section 6 states the BTCPay webhook HMAC secret is “stored encrypted,” but the encrypted data list omits it. Either the list or the earlier claim is wrong, leaving readers unsure whether we protect that secret like the other credentials.
 product-and-tech-spec.md:185 vs product-and-tech-spec.md:369 – The spec says rotating the API key also rotates the webhook HMAC secret, but the rotation flow (endpoint #10) only covers the API key. If HMAC rotation is required, we need to spell out how the new secret is generated, persisted, and shared with BTCPay.
 Open Questions
 
-How do we want to handle BTCPay’s underpaid/late payment paths so partial reconciliation actually works? Should we start reacting to InvoicePaymentSettled or poll invoices nearing expiry?
-Do we intend to encrypt the webhook HMAC secret? If yes, we should add it to the encrypted data list (and cover IV/tag handling); if no, rephrase Section 6 so operators know it’s plaintext.
 When rotating secrets, do we also plan to re-register the webhook with BTCPay so the new secret takes effect automatically, or is manual action acceptable?
 Overall the rest hangs together, but I’d resolve these contradictions before treating the spec as locked.
