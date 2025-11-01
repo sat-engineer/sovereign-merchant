@@ -210,3 +210,12 @@ No mention of:
 11. Add store selection (#22)
 
 This is a solid foundation. Addressing the security items (#1-4) is essential before release.
+
+extra safety: make webhooks fire-and-forget
+
+super important: /webhooks/btcpay should never do the real work.
+
+why?
+	•	BTCPay expects fast 200
+	•	if QBO is slow, you don’t want BTCPay to retry and send dupes
+	•	you already have idempotency in the worker
