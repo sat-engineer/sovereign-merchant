@@ -510,28 +510,96 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
   "invoiceId": "ABCD1234",
   "storeId": "STORE123",
   "status": "Settled",
-  "amountBtc": 0.0025,
-  "amountUsd": 168.32,
+  "invoiceAmountBtc": 0.0025,
+  "invoiceAmountUsd": 168.32,
+  "paidAmountBtc": 0.0025,
+  "paidAmountUsd": 168.32,
   "currency": "USD",
   "rateSource": "btcpay-store-rate",
-  "txId": "f0e2a3...",
-  "paidAt": "2025-10-31T16:12:45Z"
+  "paymentCount": 1,
+  "payments": [
+    {
+      "txId": "f0e2a3...",
+      "amountBtc": 0.0025,
+      "amountUsd": 168.32,
+      "confirmations": 6,
+      "paidAt": "2025-10-31T16:12:45Z"
+    }
+  ],
+  "paidAt": "2025-10-31T16:12:45Z",
+  "reconciliationStatus": "full" | "partial" | "overpaid" | "invalidated" | "failed"
 }
+```
 
-Notes:
-	•	amountUsd = the USD value BTCPay calculated at invoice creation time, i.e. the locked rate.
-	•	if BTCPay doesn’t return a fiat amount, we can query the invoice detail to get the original price and currency from BTCPay’s internal model.
-	•	we store rateSource so we know where we got the number from if someone later changes store settings.
+**Payment Tracking:**
+- `invoiceAmountUsd/Btc`: Original invoice amount (locked at creation time).
+- `paidAmountUsd/Btc`: Sum of all confirmed payments for this invoice.
+- `paymentCount`: Number of distinct payment transactions.
+- `payments`: Array of all payment transactions (to handle multiple payments).
+- `reconciliationStatus`: 
+  - `full`: paidAmount is within 1% of invoiceAmount (accounts for exchange rate drift, timing differences, and rounding)
+  - `partial`: paidAmount < 99% of invoiceAmount (customer paid significantly less than full amount)
+  - `overpaid`: paidAmount > 101% of invoiceAmount (customer paid significantly more than full amount)
+  - `invalidated`: invoice was invalidated or expired in BTCPay before reconciliation (no reconciliation attempted)
+  - `failed`: reconciliation attempt to QBO failed (may be retried automatically or manually)
+
+**Notes:**
+- `invoiceAmountUsd` = the USD value BTCPay calculated at invoice creation time, i.e. the locked rate.
+- If BTCPay doesn't return a fiat amount, we query the invoice detail to get the original price and currency from BTCPay's internal model.
+- We store `rateSource` so we know where we got the number from if someone later changes store settings.
+- Each payment in the `payments` array tracks individual transactions (customer may send multiple payments).
 
 12.3 Sync Logic
-	1.	poll BTCPay every intervalSeconds (default: 60s).
-	2.	fetch invoices newer than lastSyncAt and with status == Settled.
-	3.	for each invoice:
-	•	fetch payments → ensure at least one confirmed on-chain payment
-	•	build a BTCQBO payload (see next section)
-	•	call BTCQBO inside BTCPay at /plugins/btcqbo/...
-	4.	write success/failure + message to SQLite
-	5.	update lastSyncAt
+
+**Payment Detection and Aggregation:**
+1. Poll BTCPay every `intervalSeconds` (default: 60s).
+2. Fetch invoices newer than `lastSyncAt` with status == `Settled` (or check for status changes on existing invoices).
+3. For each invoice:
+   * Fetch all payments via `/api/v1/stores/{storeId}/invoices/{invoiceId}/payments`
+   * Filter to confirmed on-chain payments (confirmations >= 1, or use BTCPay's payment status)
+   * Calculate `paidAmountBtc` = sum of all confirmed payment amounts
+   * Calculate `paidAmountUsd` = sum of all confirmed payment amounts converted to USD at invoice rate
+   * Determine `reconciliationStatus`:
+     - If `paidAmountUsd >= invoiceAmountUsd * 0.99` and `paidAmountUsd <= invoiceAmountUsd * 1.01` (within 1% tolerance for exchange rate drift and rounding) → `full`
+     - If `paidAmountUsd < invoiceAmountUsd * 0.99` → `partial`
+     - If `paidAmountUsd > invoiceAmountUsd * 1.01` → `overpaid`
+   * Store/update payment data in local database
+
+**Reconciliation Rules by Mode:**
+
+* **Deposit Mode (BTCPay-first):**
+  - `full` payment: Create deposit/sale in QBO for full `paidAmountUsd`
+  - `partial` payment: Create deposit for `paidAmountUsd` (partial amount; invoice may remain open in BTCPay)
+  - `overpaid` payment: Create deposit for `invoiceAmountUsd` (full invoice amount only; overpayment handling depends on merchant policy)
+  - Store reconciliation status in local DB for audit trail
+
+* **Invoicing Mode (BTCPay-first):**
+  - `full` payment: Match to existing QBO invoice and mark as paid (if QBO invoice ID is available via metadata)
+  - `partial` payment: Apply `paidAmountUsd` to QBO invoice (partial payment; QBO invoice may remain partially unpaid)
+  - `overpaid` payment: Mark QBO invoice as paid in full; log overpayment amount
+  - If QBO invoice ID not available, fall back to Deposit mode behavior
+
+* **QBO-First Mode:**
+  - `full` payment: Mark original QBO invoice as paid in full via BTCQBO
+  - `partial` payment: Apply `paidAmountUsd` as partial payment to QBO invoice (QBO invoice remains partially unpaid)
+  - `overpaid` payment: Mark QBO invoice as paid in full; log overpayment amount for credit/refund handling
+  - Uses stored BTCPay invoice ID → QBO invoice ID mapping (from Section 7.2)
+
+**Multiple Payments Handling:**
+- Track all payments in the `payments` array (customer may send multiple transactions)
+- Aggregate amounts across all confirmed payments
+- Reconcile incrementally: if invoice was `partial` and new payment arrives, update QBO with additional amount
+- Only reconcile once per invoice unless status changes (use idempotency to prevent duplicate QBO entries)
+
+**Reconciliation Execution:**
+4. Build BTCQBO payload (see Section 13) with appropriate amount based on reconciliation status
+5. Call BTCQBO inside BTCPay at `/plugins/btcqbo/...` (pass `paidAmountUsd` for partial payments)
+6. Write success/failure + reconciliation details to SQLite
+7. Update `lastSyncAt` timestamp
+
+**Edge Cases:**
+- If invoice status changes from `Settled` → `Invalid` or `Expired`, mark reconciliation as `invalidated` and log the change
+- If payment is refunded in BTCPay, detect status change and handle refund reconciliation (future: reverse QBO entry)
 
 ⸻
 
@@ -543,32 +611,78 @@ Modes:
 
 Mode	Source (BTCPay)	Target (QBO)	Notes
 Deposit	settled invoice/payment	Deposit / Sales Receipt	default for BTC-first / normie flows
-Invoicing	settled invoice/payment	Payment applied to existing invoice	for QBO-first, accountant-friendly flows
+Invoicing	settled invoice/payment	Payment applied to existing invoice	for BTCPay-first with existing QBO invoices
+QBO-First	settled invoice/payment	Payment applied to QBO invoice	QBO-first mode with invoice mapping
 
-Payload we send conceptually:
+**Payload Structure:**
 
+Base payload (full payment):
+```json
 {
   "invoiceId": "ABCD1234",
   "amountUsd": 168.32,
   "amountBtc": 0.0025,
   "paidAt": "2025-10-31T16:12:45Z",
-  "mode": "deposit",
+  "mode": "deposit" | "invoicing" | "qbo-first",
+  "reconciliationStatus": "full",
   "notes": "Synced via Sovereign Merchant"
 }
+```
 
-we still let BTCQBO decide the exact QBO object (Deposit vs Payment) because that logic lives with the plugin.
+Partial payment payload:
+```json
+{
+  "invoiceId": "ABCD1234",
+  "amountUsd": 134.65,  // partial amount actually paid
+  "invoiceAmountUsd": 168.32,  // original invoice amount
+  "amountBtc": 0.0020,
+  "paidAt": "2025-10-31T16:12:45Z",
+  "mode": "invoicing" | "qbo-first",
+  "reconciliationStatus": "partial",
+  "notes": "Partial payment via Sovereign Merchant (80% paid)"
+}
+```
+
+Overpaid payment payload:
+```json
+{
+  "invoiceId": "ABCD1234",
+  "amountUsd": 185.15,  // overpaid amount
+  "invoiceAmountUsd": 168.32,  // original invoice amount
+  "amountBtc": 0.00275,
+  "paidAt": "2025-10-31T16:12:45Z",
+  "mode": "deposit" | "invoicing" | "qbo-first",
+  "reconciliationStatus": "overpaid",
+  "overpaymentAmountUsd": 16.83,
+  "notes": "Overpaid via Sovereign Merchant (10% overpayment)"
+}
+```
+
+**Invalidated/Failed Payloads:**
+- `invalidated` status: Do not send to BTCQBO; only log locally that invoice was invalidated
+- `failed` status: Include error details in payload; may be retried automatically or manually
+
+**Payload Notes:**
+- For partial payments: Pass `amountUsd` as the actual paid amount, include `invoiceAmountUsd` for context
+- For QBO-first mode: Include `qboInvoiceId` in payload (from stored mapping) to ensure payment applies to correct QBO invoice
+- BTCQBO decides the exact QBO object type (Deposit vs Payment) based on mode and reconciliation status
+- Overpayments: For deposit mode, create deposit for full invoice amount only; log overpayment separately
+- Overpayments: For invoicing/qbo-first modes, mark invoice as paid in full; log overpayment for credit/refund handling
+- Status is determined immediately when invoice is processed (no intermediate pending state)
 
 ⸻
 
 14. Error Handling & Retry Policy
 
-we don’t want Blake calling you because of a transient 500.
-	•	idempotent per invoice: we key retries by invoiceId, so we don’t double-post.
+we don't want Blake calling you because of a transient 500.
+	•	idempotent per invoice: we key retries by `invoiceId + reconciliationStatus`, so we don't double-post. If reconciliation status changes (partial → full), we reconcile again with updated amount.
 	•	retry on network / 5xx: exponential backoff + jitter, e.g. 5s → 15s → 60s → mark as error.
-	•	auth errors (QBO token expired): try refresh once → if still bad, flip app state to ERROR and show “Reconnect QuickBooks.”
-	•	BTCPay unreachable: surface “BTCPay not reachable at ” in the UI, don’t kill the worker.
-	•	logs: every failed attempt goes into SQLite with timestamp, level, message, and (if present) invoiceId.
+	•	auth errors (QBO token expired): try refresh once → if still bad, flip app state to ERROR and show "Reconnect QuickBooks."
+	•	BTCPay unreachable: surface "BTCPay not reachable at " in the UI, don't kill the worker.
+	•	logs: every failed attempt goes into SQLite with timestamp, level, message, invoiceId, and reconciliationStatus.
 	•	manual retry: POST /api/sync/now?invoiceId=... to re-run a single invoice.
+	•	partial payment updates: if invoice was partially paid and new payment arrives, reconcile incrementally (add new payment amount to QBO). Use idempotency key: `invoiceId-reconciliationStatus-timestamp` to prevent duplicate QBO entries for same partial payment.
+	•	overpayment handling: log overpayment amount for merchant review; QBO reconciliation marks invoice as paid but doesn't create credit unless merchant configures it.
 
 ⸻
 
