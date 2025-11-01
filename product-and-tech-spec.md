@@ -159,6 +159,7 @@ sovereign-merchants/
 
 * **API key encryption:** BTCPay + QBO tokens encrypted at rest with local key.
 * **HTTPS enforced:** fallback to HTTP only if self-hosted/localnet.
+* **OAuth CSRF protection:** All OAuth flows use `state` parameter validation. Server generates cryptographically random state tokens, stores them with short expiry (10 minutes), and validates on callback to prevent cross-site request forgery attacks.
 * **Logs rotated:** capped log size to prevent disk growth.
 * **Config export/import:** JSON backup file for migration or node restore.
 * **Auto health checks:** fail-fast `/healthz` endpoint to trigger restarts.
@@ -214,13 +215,19 @@ Base URL: `/api`
 
 4. `GET /api/config/qbo/url`
 
-   * **Action:** returns the Intuit OAuth2 authorization URL (built from the app’s client id/secret + redirect URI).
-   * **Frontend** opens this in a popup.
+   * **Action:** generates a cryptographically random `state` parameter (e.g., 32-byte random hex), stores it server-side (in-memory cache or SQLite with 10-minute expiry), and returns the Intuit OAuth2 authorization URL with `state` appended as a query parameter.
+   * **Returns:** `{ "authUrl": "https://appcenter.intuit.com/connect/oauth2?client_id=...&state=..." }`
+   * **Security:** The `state` parameter prevents CSRF attacks by ensuring the callback only processes requests that originated from our backend. The state is stored server-side and will be validated when Intuit redirects back with it in the callback URL.
+   * **Frontend** opens `authUrl` in a popup. Intuit will echo back the `state` parameter in the callback URL, which our backend will validate.
 
-5. `GET /api/config/qbo/callback`
+5. `GET /api/config/qbo/callback?code=...&state=...&realmId=...`
 
-   * **Action:** receives Intuit `code` + `realmId`, exchanges for tokens, persists.
+   * **Action:** 
+     1. Validates the `state` parameter matches a stored state token (must exist and not be expired).
+     2. If state is invalid or missing → returns error HTML page (prevents CSRF attack).
+     3. If valid → exchanges `code` + `realmId` for access/refresh tokens, persists tokens, and deletes the used state token.
    * **Returns:** success HTML page that auto-closes popup and notifies SPA.
+   * **Security:** State validation ensures only legitimate OAuth flows initiated by our backend can complete token exchange.
 
 6. `POST /api/config/reconciliation`
 
@@ -273,11 +280,16 @@ This lets the frontend show a single prominent call-to-action depending on state
 ### 10.1 Preferred Path (No Keys Required)
 
 1. User clicks **Connect QuickBooks**.
-2. Backend calls Intuit to build an **OAuth2 auth URL** using **our** client id + redirect URL.
-3. User signs into their real QBO (not sandbox) and selects the company.
-4. Intuit redirects back to `/api/config/qbo/callback` with `code` + `realmId`.
-5. Backend exchanges code for **production** access/refresh tokens and stores them.
-6. UI shows: “✅ Connected to QuickBooks: *Company Name*”.
+2. Backend generates a cryptographically random `state` parameter (e.g., 32-byte random hex), stores it server-side with a 10-minute expiry, and builds an **OAuth2 auth URL** using **our** client id + redirect URL + `state` parameter.
+3. Frontend opens the auth URL in a popup.
+4. User signs into their real QBO (not sandbox) and selects the company.
+5. Intuit redirects back to `/api/config/qbo/callback` with `code`, `realmId`, and `state`.
+6. Backend validates the `state` parameter matches the stored token (CSRF protection). If invalid or expired, returns error and rejects the callback.
+7. If valid, backend exchanges `code` for **production** access/refresh tokens and stores them.
+8. Backend deletes the used state token (one-time use to prevent replay attacks).
+9. UI shows: "✅ Connected to QuickBooks: *Company Name*".
+
+**Security Note:** The `state` parameter prevents CSRF attacks. If an attacker attempts to redirect a callback with a forged `code`, they cannot provide a valid `state` that matches our server-stored token, so the request is rejected.
 
 This is the smooth path. No dev portal. No dashboard. No confusion.
 
@@ -292,8 +304,8 @@ For shops that don’t want to trust our Intuit app (fully sovereign), we give t
    * Make sure the **Environment** is **Production**, not just Sandbox.
    * Add an **OAuth redirect URI** pointing to their node’s Sovereign Merchants URL, e.g. `https://sovereign-merchants.local/api/config/qbo/callback`.
    * Copy the **Client ID** and **Client Secret**.
-4. In Sovereign Merchants → Settings → “Use my own Intuit app” → paste Client ID + Secret + Redirect URI.
-5. Click **Connect QuickBooks** again → now the flow uses **their** keys.
+4. In Sovereign Merchants → Settings → "Use my own Intuit app" → paste Client ID + Secret + Redirect URI.
+5. Click **Connect QuickBooks** again → now the flow uses **their** keys (same CSRF protection via `state` parameter applies).
 
 We should explicitly warn:
 
