@@ -193,19 +193,19 @@ No mention of:
 ## Priority recommendations
 
 **Critical (fix before v1)**:
-1. Add OAuth CSRF protection (#1)
-2. Add API authentication (#2)
-3. Specify encryption key management (#3)
-4. Clarify QBO-first flow integration (#6)
+1. Add OAuth CSRF protection (#1) ✅
+2. Add API authentication (#2) ✅
+3. Specify encryption key management (#3) ✅
+4. Clarify QBO-first flow integration (#6) ✅
 
 **High (address soon)**:
-5. Add endpoints for QBO-first flow (#7)
-6. Handle partial payments (#9)
+5. Add endpoints for QBO-first flow (#7) ✅
+6. Handle partial payments (#9) ✅
 7. Improve error recovery (#11)
 8. Split sync worker from API server (#18)
 
 **Medium (nice to have)**:
-9. Add webhook support (#20)
+9. Add webhook support (#20) ✅
 10. Improve setup UX (#14, #15)
 11. Add store selection (#22)
 
