@@ -1,12 +1,12 @@
 ## Sovereign Merchant
 
-### Product & Technical Specification (v0.2)
+### Product & Technical Specification (v0.3)
 
 ---
 
 ## 1. Product Overview
 
-**Goal:**  Empower merchants using BTCPayServer on Start9 or Umbrel to automatically reconcile Bitcoin payments with QuickBooks Online, using the BTCQBO plugin under the hood. The app should require no command-line usage and feel as simple as a native App Store install.
+**Goal:**  Empower merchants using BTCPayServer on Start9 or Umbrel to automatically reconcile Bitcoin payments with QuickBooks Online through Sovereign Merchant’s native Node/TypeScript connector. The experience should require no command-line usage and feel as simple as a native App Store install while mirroring the battle-tested BTCQBO behavior without depending on the plugin at runtime.
 
 **Tagline:**
 
@@ -14,6 +14,9 @@
 
 **Core Value:**
 Merchants running self-hosted Bitcoin payment servers should have the same bookkeeping automation as fiat payment processors. Sovereign Merchant delivers that with full control, zero third-party custody, and no monthly fees beyond Bitcoin network costs.
+
+**Legacy Reference:**  
+BTCQBO remains the behavioral reference for how reconciliation should behave, but Sovereign Merchant re-implements that logic entirely inside our Node/TypeScript stack. No BTCPay plugin is called at runtime; all QuickBooks writes happen through our own provider layer.
 
 ---
 
@@ -24,14 +27,20 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 1. **Simple install** – one-click app install via Start9 or Umbrel, no terminal commands.
 2. **Auto-discovery of BTCPayServer** – detect BTCPay on same node; fallback to manual input.
 3. **QuickBooks integration** – full OAuth2 connection and auto-token refresh.
-4. **Auto-reconciliation** – sync invoices/payments from BTCPay to QuickBooks using BTCQBO endpoints.
+4. **Auto-reconciliation** – sync invoices/payments from BTCPay to QuickBooks using the native AccountingProvider (QuickBooksOnlineProvider) that mirrors BTCQBO semantics.
 5. **Clear status UI** – always show connection health and recent syncs.
+6. **BYO Intuit app onboarding** – guide merchants through creating/using their own Intuit developer app (Client ID/Secret) with idiot-proof docs and screenshots baked into the UI.
 
 ### 2.2 Non-goals (v1)
 
 * No Lightning support (on-chain only for simplicity).
 * No multi-company QuickBooks linking.
 * No terminal or advanced configuration (expert settings can come later).
+
+### 2.3 Roadmap
+
+* **v1 – BTCPay-first Reconciliation (MVP):** Listen for BTCPay settlements and mark them as paid in QuickBooks. Scope is intentionally narrow so we can obsess over reliability, verbose logs, and smooth Umbrel UX.
+* **v2 – JIT “Pay in Bitcoin” Links (QBO-first Bridge):** Generate signed links that create BTCPay invoices on click to let QuickBooks invoices be paid in bitcoin. JIT behavior arrives in v2 only; nothing beyond reconciliation ships in v1.
 
 ---
 
@@ -41,15 +50,13 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 
 1. User installs from the platform app store.
 2. App starts with a welcome screen. Backend auto-generates API key on first startup.
-3. Frontend fetches initial API key from `/api/config/api-key/initial` (one-time, no auth required) and stores it in localStorage.
+3. Frontend fetches initial API key from `/api/config/api-key/initial` (one-time). The endpoint only responds while app state = `INIT`, is reachable solely through the platform’s authenticated proxy (Umbrel dashboard/Start9 admin), and expires after the first retrieval or ~10 minutes. If the key is lost, operators can run the documented local CLI reset to rotate a fresh key.
 4. Detect or request BTCPay URL + API key.
 5. Click **"Connect QuickBooks"** → OAuth2 popup → confirmation.
 6. Choose reconciliation mode:
    * **Deposit** (default) - BTCPay-first: payments auto-create deposits in QBO.
    * **Invoicing** - BTCPay-first: payments match existing QBO invoices.
-   * **QBO-First** - Traditional QBO workflow with Bitcoin payment links (see Section 18).
-7. Confirmation screen shows sync summary and logs.
-   * For QBO-first mode: UI shows instructions for generating payment links and integrating with QBO invoices.
+7. Confirmation screen shows sync summary and logs. Anything beyond BTCPay-first reconciliation is deferred to v2 (see Section 2.3).
 
 ### 3.2 Example UI Copy
 
@@ -60,7 +67,7 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
   1. Detect BTCPay → Confirm or enter manually.
   2. Connect QuickBooks → Launch OAuth flow.
   3. Choose Mode → Deposit (default) / Invoicing.
-* **Footer:** "Powered by [BTCQBO](https://github.com/JeffVandrewJr/btcqbo)."
+* **Footer:** (none; reconciliation happens natively inside Sovereign Merchant).
 
 ---
 
@@ -102,7 +109,7 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
    * **Purpose:** Processes reconciliation jobs independently from API server.
    * **Responsibilities:**
      - Consumes webhook events from queue (written by API server)
-     - Processes payment reconciliation logic (fetches BTCPay data, calls BTCQBO)
+     - Processes payment reconciliation logic (fetches BTCPay data, calls the AccountingProvider implementation)
      - Handles fallback periodic sync for missed webhooks (optional, configurable)
      - Logs reconciliation status, errors, and metrics to shared database
    * **Communication:** 
@@ -114,7 +121,7 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 3. **Storage Layer**
 
    * SQLite database under `/data/config.db`.
-   * Stores BTCPay URL + key (encrypted), BTCPay webhook secret + webhook ID (encrypted/plaintext respectively), QBO tokens (encrypted), reconciliation mode, API key (hashed), logs, QBO-first invoice mappings (BTCPay invoice ID → QBO invoice ID for reconciliation), and processed webhook event IDs (for idempotency).
+   * Stores BTCPay URL + key (encrypted), BTCPay webhook secret + webhook ID (encrypted/plaintext respectively), QBO tokens (encrypted), reconciliation mode, API key (hashed), logs, and processed webhook event IDs (for idempotency).
    * Encryption key stored separately (see Section 6.1) in platform secrets or `/data/encryption.key`.
    * Data directory exposed as a Docker volume for persistence.
    * **Concurrency:** SQLite handles concurrent reads/writes via WAL mode (Write-Ahead Logging). API server writes events, worker reads and processes them.
@@ -128,6 +135,13 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
    * React SPA (Vite) with minimal design → 3 setup steps + status dashboard.
    * Talks to `/api` endpoints from the backend.
 
+### 4.3 Accounting Provider Abstraction
+
+* Introduce an `AccountingProvider` interface (`reconcileDeposit`, `reconcileInvoicePayment`, `health`, etc.) so BTCPay events flow through a single contract regardless of downstream accounting platform.
+* `QuickBooksOnlineProvider` is the only shipped implementation in v1. It re-creates the BTCQBO behavior in pure Node/TypeScript using Intuit’s REST APIs and refreshed OAuth tokens.
+* Future providers (`XeroProvider`, `OdooProvider`) can plug in by implementing the same interface and sharing the reconciliation job pipeline.
+* Worker passes normalized payment payloads (amounts, currency, invoice metadata) into the provider and receives structured success/error responses for logging and retries.
+
 ---
 
 ## 5. Repository Structure
@@ -136,12 +150,12 @@ Merchants running self-hosted Bitcoin payment servers should have the same bookk
 sovereign-merchant/
 ├── core/                  # Node backend (Fastify API, sync worker)
 │   ├── src/
-│   │   ├── api/           # API routes (config, sync, status, qbo-first)
-│   │   ├── jobs/          # Scheduler + sync logic (handles both BTCPay-first and QBO-first)
-│   │   ├── services/      # BTCPay + QBO clients
-│   │   ├── models/        # SQLite schema + migrations (includes qbo-first invoice mappings)
-│   │   ├── routes/        # Public routes (/pay endpoint for QBO-first)
-│   │   └── utils/         # Logger, encryption helpers, HMAC signing
+│   │   ├── api/           # API routes (config, sync, status, logs)
+│   │   ├── jobs/          # Scheduler + sync logic (webhook pipeline, retries)
+│   │   ├── services/      # BTCPay + AccountingProvider clients
+│   │   ├── models/        # SQLite schema + migrations (config, tokens, logs, processed events)
+│   │   ├── routes/        # Platform/public routes (status, health)
+│   │   └── utils/         # Logger, encryption helpers, signing helpers
 │   ├── package.json
 │   └── tsconfig.json
 │
@@ -182,7 +196,7 @@ sovereign-merchant/
 
 * **API authentication:** All API endpoints (except `/healthz`, `/api/config/qbo/callback`, and one-time `/api/config/api-key/initial`) require API key authentication. API key is auto-generated on first install (cryptographically random, 32-byte hex string), stored hashed (SHA-256) in database, and must be provided in `Authorization: Bearer <key>` header or `?apiKey=<key>` query parameter. Frontend stores API key in localStorage after successful authentication. Keys can be rotated via settings UI. Failed authentication attempts are rate-limited (10 attempts per IP per minute).
 * **Sensitive data encryption:** BTCPay API keys and QuickBooks OAuth tokens (access + refresh) are encrypted at rest using AES-256-GCM. See Section 6.1 for encryption key management details.
-* **HMAC secret management:** QBO-first payment links use HMAC signatures. Secret is auto-generated on first install (32-byte random), stored encrypted alongside encryption key (Section 6.1), and rotated whenever the API key is rotated. The rotation flow issues a new secret, updates the BTCPay webhook registration, and persists the encrypted secret + webhook metadata. See Section 18 for payment link security.
+* **API key bootstrap hardening:** `/api/config/api-key/initial` is exposed only while app state = `INIT`, rejects direct container requests (must include Umbrel/Start9 proxy auth headers), and invalidates after the first retrieval or ~10 minutes. Losing the key requires running the documented local CLI reset (`sovereign-merchant reset-api-key`) which rotates the key, re-enables `INIT`, and logs the event.
 * **HTTPS enforced:** fallback to HTTP only if self-hosted/localnet.
 * **OAuth CSRF protection:** All OAuth flows use `state` parameter validation. Server generates cryptographically random state tokens, stores them with short expiry (10 minutes), and validates on callback to prevent cross-site request forgery attacks.
 * **Logs rotated:** capped log size to prevent disk growth.
@@ -250,37 +264,23 @@ sovereign-merchant/
 
 ## 7. Data Flow
 
-### 7.1 BTCPay-First Flow (Default)
+### 7.1 BTCPay-First Flow (v1 Scope)
 
 **Use case:** Merchants create invoices directly in BTCPay and want payments auto-synced to QuickBooks.
 
 1. **BTCPay invoice/payment event** (on-chain, confirmed) triggers a webhook to Sovereign Merchant.
 2. **Sovereign Merchant webhook handler** receives the event in real-time (`InvoiceSettled` and incremental `InvoicePaymentSettled` updates) and processes it immediately.
-3. For each new payment event, the worker formats a **BTCQBO-compatible request** and calls the BTCQBO plugin endpoint running inside BTCPay.
-4. **BTCQBO plugin** uses the stored QuickBooks OAuth credentials to create/update the appropriate objects in QBO (depending on mode: Deposit vs Invoicing).
+3. For each new payment event, the worker normalizes the invoice/payments and builds an `AccountingProvider` payload (mirroring BTCQBO semantics) containing mode, amounts, and metadata.
+4. **QuickBooksOnlineProvider** uses the stored OAuth credentials to create/update the appropriate objects in QBO (Deposit vs Invoicing) directly through Intuit’s REST APIs.
 5. **Sovereign Merchant** records the outcome (success/failure, QBO object id if available) in SQLite and exposes it to the UI.
-6. UI shows a chronological list: BTCPay invoice → BTCQBO call → QBO success.
+6. UI shows a chronological list: BTCPay invoice → native QuickBooks provider call → QBO success.
 
-### 7.2 QBO-First Flow (Dynamic Invoice Bridge)
-
-**Use case:** Merchants create invoices in QuickBooks (traditional workflow) and offer Bitcoin payment option via "Pay in Bitcoin" links.
-
-1. **QBO invoice created** → Merchant generates signed "Pay in Bitcoin" link (see Section 18) and includes it in QBO invoice email.
-2. **Customer clicks payment link** → Hits `/pay?q=...&sig=...` endpoint on Sovereign Merchant.
-3. **Sovereign Merchant validates link** → Verifies HMAC signature, fetches invoice details from QBO, confirms invoice status and amount.
-4. **Sovereign Merchant creates BTCPay invoice** → Creates short-lived BTCPay invoice (30-minute expiry) with current BTC rate for the USD amount.
-5. **Customer redirected to BTCPay** → Pays on BTCPay payment page.
-6. **Sovereign Merchant webhook handler** → Receives webhook events for the BTCPay invoice (partial updates via `InvoicePaymentSettled`, final pass via `InvoiceSettled`) using the same real-time mechanism as 7.1.
-7. **Reconciliation** → Worker calls BTCQBO to mark the original QBO invoice as paid (using the QBO invoice ID stored during step 3).
-8. UI shows: QBO invoice → Payment link clicked → BTCPay invoice created → Payment settled → QBO invoice marked paid.
-
-**Note:** The sync worker handles both BTCPay-first and QBO-first flows by tracking invoice source and reconciliation mode.
-
-### 7.3 Reconciliation Modes (BTCQBO)
+### 7.2 Reconciliation Modes (Native Provider)
 
 * **Deposit Mode (default, BTCPay-first):** designed for merchants who treat BTCPay as a payment terminal. Every successful BTCPay payment is posted to QBO as a deposit/sale into a chosen account.
-* **Invoicing Mode (BTCPay-first):** designed for merchants who already issue invoices from QBO and want BTCPay payments to be matched against existing QBO invoices (requires manual matching or additional metadata).
-* **QBO-First Mode:** designed for merchants who create invoices in QBO and use Sovereign Merchant as a dynamic payment bridge. BTCPay invoices are created on-demand when customers click payment links, and payments are automatically reconciled back to the original QBO invoice (see Section 18).
+* **Invoicing Mode (BTCPay-first):** designed for merchants who already issue invoices from QBO and want BTCPay payments to be matched against existing QBO invoices (requires manual linking/metadata).
+
+Roadmap-only features live exclusively in Section 2.3 to keep v1 scope laser-focused on reconciliation reliability.
 
 ---
 
@@ -296,8 +296,7 @@ Base URL: `/api`
 - `GET /healthz` - platform health checks (no auth required)
 - `GET /api/config/api-key/initial` - initial API key retrieval (one-time only, no auth required)
 - `GET /api/config/qbo/callback` - OAuth callback (protected by state validation, no API key required)
-- `GET /pay?q=...&sig=...` - QBO-first payment link handler (protected by HMAC signature, no API key required; see endpoint #11)
-- `POST /webhooks/btcpay` - BTCPay webhook handler (protected by BTCPay HMAC signature, no API key required; see endpoint #14)
+- `POST /webhooks/btcpay` - BTCPay webhook handler (protected by BTCPay HMAC signature, no API key required; see endpoint #11)
 
 1. `GET /api/status`
 
@@ -322,7 +321,7 @@ Base URL: `/api`
      - Registers webhook endpoint in BTCPayServer (if webhook doesn't exist, creates it)
      - Webhook URL: `https://sovereign-merchant.local/webhooks/btcpay` (uses configured base URL)
    * **Returns:** `{ "url": "...", "webhookRegistered": true, "webhookId": "..." }`
-   * **Errors:** unreachable, 401 from BTCPay, BTCQBO plugin missing, webhook registration failed.
+   * **Errors:** unreachable, 401 from BTCPay, webhook registration failed.
 
 3. `GET /api/config/btcpay/auto-discover`
 
@@ -347,9 +346,8 @@ Base URL: `/api`
 
 6. `POST /api/config/reconciliation`
 
-   * **Body:** `{ "mode": "deposit" | "invoicing" | "qbo-first", "fallbackSyncEnabled": true, "fallbackSyncIntervalSeconds": 3600 }`
-   * **Action:** update local config. Mode determines reconciliation behavior (see Section 7.3).
-   * **Note:** `qbo-first` mode enables dynamic invoice bridge functionality (Section 18).
+   * **Body:** `{ "mode": "deposit" | "invoicing", "fallbackSyncEnabled": true, "fallbackSyncIntervalSeconds": 3600 }`
+   * **Action:** update local config. Mode determines reconciliation behavior (see Section 7.2).
    * **Note:** `fallbackSyncEnabled` enables optional periodic sync to catch missed webhooks (default: true, runs every hour).
 
 7. `POST /api/sync/now`
@@ -364,8 +362,8 @@ Base URL: `/api`
 
    * **Purpose:** retrieve the auto-generated API key on first install. Only works within the first 10 minutes after app installation (or until an API key has been used successfully in a request). After this window, users must use the API key rotation endpoint (which requires authentication) or reinstall the app.
    * **Returns:** `{ "apiKey": "abc123..." }` (plaintext, shown once per request)
-   * **Security:** Time-limited to prevent indefinite access without proper authentication. Frontend should immediately store the key in localStorage and use it for all subsequent requests. After 10 minutes or first authenticated request, this endpoint returns 403.
-   * **Recovery:** If API key is lost after the initial window, users with console/SSH access can reset it directly in the database, or the app can be reinstalled. Future versions may include a recovery token system.
+   * **Security:** Time-limited, restricted to app state = `INIT`, and only reachable when the request passes through the platform’s authenticated proxy headers (e.g., Umbrel session). Frontend should immediately store the key in localStorage and use it for all subsequent requests. After 10 minutes, first authenticated request, or once the state leaves `INIT`, this endpoint returns 403.
+   * **Recovery:** If the API key is lost after the initial window, users with console/SSH access run the documented CLI reset (rotates key + re-enters `INIT`), or the app can be reinstalled. Future versions may include a recovery token system.
 
 10. `POST /api/config/api-key/rotate`
 
@@ -380,37 +378,7 @@ Base URL: `/api`
      5. Returns the new API key (plaintext once); webhook secret is never returned via API.
    * **Security:** Requires valid API key authentication (uses old key to authorize the rotation). Ensures BTCPay immediately uses the fresh secret so there is no window where webhooks are signed with stale credentials.
 
-11. `GET /pay?q=...&sig=...` (public endpoint, no API key required)
-
-   * **Purpose:** QBO-first flow — customer clicks "Pay in Bitcoin" link from QBO invoice.
-   * **Parameters:** 
-     * `q` - Base64-encoded JSON: `{ "invoiceId": "INV-12345", "amountUsd": 168.32, "version": 1 }`
-     * `sig` - HMAC signature over `q` using server secret (prevents tampering).
-   * **Action:**
-     1. Validates HMAC signature; rejects if invalid.
-     2. Fetches invoice details from QBO to confirm amount, status, and existence.
-     3. Checks if invoice is already paid; if so, shows "Invoice already paid" message.
-     4. Creates BTCPay invoice for the USD amount (30-minute expiry, current BTC rate).
-     5. Stores mapping: BTCPay invoice ID → QBO invoice ID.
-     6. Redirects customer to BTCPay payment page.
-   * **Returns:** HTTP 302 redirect to BTCPay payment page, or error page if validation fails.
-   * **Security:** HMAC signature prevents amount/invoice ID tampering. Only works if reconciliation mode is set to `qbo-first`.
-
-12. `POST /api/qbo-first/generate-link` (requires auth)
-
-   * **Purpose:** Generate a signed "Pay in Bitcoin" link for a QBO invoice.
-   * **Body:** `{ "qboInvoiceId": "INV-12345", "amountUsd": 420.69 }`
-   * **Returns:** `{ "paymentLink": "https://sovereign-merchant.local/pay?q=...&sig=..." }`
-   * **Action:** Creates HMAC-signed payment link for embedding in QBO invoice emails or invoices.
-   * **Note:** Payment links don't expire. When a customer clicks the link, a BTCPay invoice is created with a 30-minute expiry (see Section 18). The QBO invoice status is checked at click-time to prevent paying already-paid invoices.
-
-13. `GET /api/qbo-first/pending-invoices` (requires auth)
-
-   * **Purpose:** List BTCPay invoices that are pending payment for QBO invoices.
-   * **Returns:** `{ "pending": [ { "btcpayInvoiceId": "...", "qboInvoiceId": "INV-12345", "amountUsd": 168.32, "createdAt": "...", "expiresAt": "..." } ] }`
-   * **Action:** Returns list of BTCPay invoices created via QBO-first flow that are not yet settled.
-
-14. `POST /webhooks/btcpay` (public endpoint, no API key required)
+11. `POST /webhooks/btcpay` (public endpoint, no API key required)
 
    * **Purpose:** Webhook endpoint for BTCPayServer invoice/payment events.
   * **Security:** Validates webhook signature using BTCPay's webhook secret (stored encrypted during BTCPay configuration).
@@ -426,7 +394,7 @@ Base URL: `/api`
      1. Validates HMAC signature from BTCPay
      2. Extracts invoice ID and event type from webhook payload
      3. Fetches full invoice details from BTCPay API if needed
-     4. Processes payment reconciliation (see Section 12.3)
+     4. Processes payment reconciliation (see Section 13.3)
   * **Returns:** `200 OK` immediately (async processing)
    * **Idempotency:** Uses BTCPay event ID to prevent duplicate processing
 
@@ -451,14 +419,13 @@ We model setup as a small state machine so the UI can be dumb and predictable.
 * `INIT` → (auto-discover fail) → `BTCPAY_PENDING`
 * `BTCPAY_PENDING` → (user enters valid URL + key) → `QBO_PENDING`
 * `QBO_PENDING` → (successful OAuth callback) → `MODE_PENDING`
-* `MODE_PENDING` → (user picks mode: `deposit`, `invoicing`, or `qbo-first`) → `READY`
+* `MODE_PENDING` → (user picks mode: `deposit` or `invoicing`) → `READY`
 * `READY` → (sync error) → `ERROR`, show remediation but keep scheduler
 * `ERROR` → (user fixes) → `READY`
 
 **Mode Selection in MODE_PENDING:**
 * **Deposit:** BTCPay-first, payments create deposits in QBO.
 * **Invoicing:** BTCPay-first, payments match existing QBO invoices (requires manual linking).
-* **QBO-First:** Traditional QBO invoice workflow with Bitcoin payment option via dynamic links.
 
 This lets the frontend show a single prominent call-to-action depending on state, so normies aren't lost.
 
@@ -468,53 +435,44 @@ This lets the frontend show a single prominent call-to-action depending on state
 
 **Context:** Most small merchants have a QBO account but have never created an Intuit Developer app. We must avoid a situation where they create **developer/sandbox** keys, then wonder why no real invoices show up.
 
-**Strategy:** the Sovereign Merchant app should ship with **our** Intuit app credentials (server-side) for the common case. Merchants just click “Connect QuickBooks” and do OAuth — no key creation. **However**, we should document a BYO-keys path for advanced/self-hosted users who insist on using their own Intuit app.
+**Strategy:** Sovereign Merchant does not ship a shared/community Intuit app. The default (and only) integration path requires each merchant to create their own Intuit developer app, paste the Client ID/Secret, and run through OAuth using those credentials. To make this painless, the UI includes a step-by-step, idiot-proof guide with inline screenshots, callouts, and copy buttons so nobody has to leave the app guessing what to click.
 
-### 10.1 Preferred Path (No Keys Required)
+### 10.1 Default BYO Flow (Required)
 
-1. User clicks **Connect QuickBooks**.
-2. Backend generates a cryptographically random `state` parameter (e.g., 32-byte random hex), stores it server-side with a 10-minute expiry, and builds an **OAuth2 auth URL** using **our** client id + redirect URL + `state` parameter.
-3. Frontend opens the auth URL in a popup.
-4. User signs into their real QBO (not sandbox) and selects the company.
-5. Intuit redirects back to `/api/config/qbo/callback` with `code`, `realmId`, and `state`.
-6. Backend validates the `state` parameter matches the stored token (CSRF protection). If invalid or expired, returns error and rejects the callback.
-7. If valid, backend exchanges `code` for **production** access/refresh tokens and stores them.
-8. Backend deletes the used state token (one-time use to prevent replay attacks).
-9. UI shows: "✅ Connected to QuickBooks: *Company Name*".
+1. User clicks **Connect QuickBooks** → wizard opens a “Create your Intuit app” panel with embedded screenshots of the Intuit developer portal.
+2. Wizard instructs them to visit **[https://developer.intuit.com/app/developer/home](https://developer.intuit.com/app/developer/home)**, click **Create an app**, and choose **QuickBooks Online and Payments**.
+3. Embedded checklist walks through:
+   * Selecting **Production** environment (with a red “don’t pick Sandbox” screenshot).
+   * Adding the node-specific redirect URI (UI provides a copy button, e.g., `https://sovereign-merchant.local/api/config/qbo/callback`).
+   * Copying the generated **Client ID** and **Client Secret**.
+4. User pastes credentials into Sovereign Merchant’s form (fields validate length/format and warn if anything looks sandbox).
+5. Backend stores the BYO credentials encrypted, generates a cryptographically random `state`, and opens Intuit OAuth at step 6 exactly as before.
+6. Upon successful OAuth callback, UI shows “✅ Connected to QuickBooks: *Company Name* (via your Intuit app)” and links back to the doc panel for future reference.
 
-**Security Note:** The `state` parameter prevents CSRF attacks. If an attacker attempts to redirect a callback with a forged `code`, they cannot provide a valid `state` that matches our server-stored token, so the request is rejected.
+### 10.2 Guided Docs & Screenshots
 
-This is the smooth path. No dev portal. No dashboard. No confusion.
-
-### 10.2 BYO Keys Path (Advanced)
-
-For shops that don’t want to trust our Intuit app (fully sovereign), we give them exact instructions:
-
-1. Go to **[https://developer.intuit.com/app/developer/home](https://developer.intuit.com/app/developer/home)** and sign in with the same Intuit account that owns the QBO company.
-2. Click **Create an app** → choose **QuickBooks Online and Payments**.
-3. In the app settings:
-
-   * Make sure the **Environment** is **Production**, not just Sandbox.
-   * Add an **OAuth redirect URI** pointing to their node’s Sovereign Merchant URL, e.g. `https://sovereign-merchants.local/api/config/qbo/callback`.
-   * Copy the **Client ID** and **Client Secret**.
-4. In Sovereign Merchant → Settings → "Use my own Intuit app" → paste Client ID + Secret + Redirect URI.
-5. Click **Connect QuickBooks** again → now the flow uses **their** keys (same CSRF protection via `state` parameter applies).
-
-We should explicitly warn:
-
-> “If you only create a Sandbox app in Intuit, Sovereign Merchant will sync only to your Sandbox company, not your real books.”
-
-We can detect this in the callback: Intuit’s sandbox realmIds follow known patterns and we can flag the UI to show a yellow banner.
+* The setup flow embeds a mini-doc with numbered steps, zoomed screenshots, and animated GIFs. Each step highlights the exact button/field to click in the Intuit portal.
+* The doc lives locally (bundled markdown) so it works offline and can be opened later via “Help → Intuit App Setup.”
+* A downloadable PDF mirrors the in-app guide for auditors/compliance teams.
+* Every sensitive value shown in the doc has an adjacent “Copy” button in the app to prevent typos.
 
 ### 10.3 Avoiding Wrong Environment
 
 * On callback, inspect `realmId` and environment; if it’s sandbox, show: “You connected to a Sandbox company. This is fine for testing, but it will not affect your real QuickBooks.”
-* Store an `environment: "production" | "sandbox"` flag alongside QBO tokens.
-* Disable auto-sync by default for sandbox.
+* Store an `environment: "production" | "sandbox"` flag alongside QBO tokens and surface it in `/api/status`.
+* Disable auto-sync by default for sandbox and keep surfacing the doc snippet that explains how to switch to production credentials.
 
 ---
 
-## 11. Next Steps
+## 11. Diagnostics & Logging
+
+* **`GET /api/status`:** Source of truth for the dashboard. Returns BTCPay reachability, QuickBooks OAuth status/expiry, selected reconciliation mode, last sync timestamp, and a rolling sample of recent log entries. The UI polls this endpoint every ~10 seconds while the dashboard is open so operators always see live health.
+* **`GET /api/logs?limit=N`:** Streams the latest N log records (default 50, max 1000). Response shape: `{ "logs": [ { "ts": "...", "level": "info" | "warn" | "error", "component": "sync" | "api", "invoiceId": "ABCD1234", "message": "..." } ] }`. Supports `?level=error` filtering and `?download=true` to force a plaintext attachment for support tickets.
+* **UI workflow:** The Status screen includes a “Logs & Diagnostics” drawer showing the newest entries with copy-to-clipboard buttons. A “Download full logs” button calls `/api/logs?limit=1000&download=true` and saves a timestamped `.log` file. Another link opens `/api/status` JSON in a modal for advanced troubleshooting, mirroring what support will ask operators to paste.
+
+---
+
+## 12. Next Steps
 
 1. Scaffold Node/TS backend (`core/`) with Fastify and `/api/status`.
 2. Add SQLite + migration for `config`, `logs`, `sync_state`.
@@ -527,14 +485,14 @@ We can detect this in the callback: Intuit’s sandbox realmIds follow known pat
 
 ---
 
-## 12. BTCPay Integration Details
+## 13. BTCPay Integration Details
 
-**Goal:** define exactly what we pull from BTCPay, what we persist locally, and how we hand it off to BTCQBO.
+**Goal:** define exactly what we pull from BTCPay, what we persist locally, and how we hand it off to the AccountingProvider (QuickBooksOnlineProvider in v1).
 
 **Primary integration point:** BTCPay Greenfield API  
 Docs: https://docs.btcpayserver.org/API/Greenfield/v1/
 
-### 12.1 Endpoints Used
+### 13.1 Endpoints Used
 
 - `GET /api/v1/stores/{storeId}`  
   to verify the store exists and that the API key is valid.
@@ -560,7 +518,7 @@ Docs: https://docs.btcpayserver.org/API/Greenfield/v1/
 - `GET /api/v1/server/info`  
   for a basic health/version check; we can surface this in the UI.
 
-### 12.2 Data We Persist
+### 13.2 Data We Persist
 
 We always persist **both** BTC and USD so accounting/debugging is easy later.
 
@@ -610,7 +568,7 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
 - Each payment in the `payments` array tracks individual transactions (customer may send multiple payments).
 - `additionalStatus` mirrors BTCPay's additional invoice status so we can surface `PaidPartial`, `PaidLate`, or other terminal reasons in the UI.
 
-12.3 Sync Logic (Webhook-Based)
+13.3 Sync Logic (Webhook-Based)
 
 **Primary: Real-Time Webhook Processing**
 
@@ -647,12 +605,6 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
   - `overpaid` payment: Mark QBO invoice as paid in full; log overpayment amount
   - If QBO invoice ID not available, fall back to Deposit mode behavior
 
-* **QBO-First Mode:**
-  - `full` payment: Mark original QBO invoice as paid in full via BTCQBO
-  - `partial` payment: Apply `paidAmountUsd` as partial payment to QBO invoice (QBO invoice remains partially unpaid)
-  - `overpaid` payment: Mark QBO invoice as paid in full; log overpayment amount for credit/refund handling
-  - Uses stored BTCPay invoice ID → QBO invoice ID mapping (from Section 7.2)
-
 **Multiple Payments Handling:**
 - Track all payments in the `payments` array (customer may send multiple transactions)
 - Aggregate amounts across all confirmed payments
@@ -660,10 +612,10 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
 - Only reconcile once per invoice unless status changes (use idempotency to prevent duplicate QBO entries)
 
 **Reconciliation Execution:**
-4. Build BTCQBO payload (see Section 13) with appropriate amount based on reconciliation status
-5. Call BTCQBO inside BTCPay at `/plugins/btcqbo/...` (pass `paidAmountUsd` for partial payments)
-6. Write success/failure + reconciliation details to SQLite
-7. Mark webhook event as processed (prevents duplicate processing)
+4. Build the AccountingProvider payload (see Section 13.4) with the appropriate amount based on reconciliation status.
+5. Invoke `QuickBooksOnlineProvider.reconcile(...)` which talks directly to Intuit’s REST APIs—no BTCPay plugin calls.
+6. Write success/failure + reconciliation details to SQLite.
+7. Mark webhook event as processed (prevents duplicate processing).
 
 **Fallback: Periodic Sync (Optional)**
 
@@ -681,16 +633,14 @@ We always persist **both** BTC and USD so accounting/debugging is easy later.
 
 ⸻
 
-13. BTCQBO → QuickBooks Mapping
+### 13.4 AccountingProvider → QuickBooks Mapping
 
-BTCQBO does the actual QuickBooks write. Sovereign Merchant orchestrates.
+QuickBooksOnlineProvider performs the actual QuickBooks writes; Sovereign Merchant simply feeds it normalized payloads and persists the results.
 
-Modes:
-
-Mode	Source (BTCPay)	Target (QBO)	Notes
-Deposit	settled invoice/payment	Deposit / Sales Receipt	default for BTC-first / normie flows
-Invoicing	settled invoice/payment	Payment applied to existing invoice	for BTCPay-first with existing QBO invoices
-QBO-First	settled invoice/payment	Payment applied to QBO invoice	QBO-first mode with invoice mapping
+| Mode      | Source (BTCPay)         | Target (QBO)                | Notes                                             |
+|-----------|-------------------------|-----------------------------|---------------------------------------------------|
+| Deposit   | Settled invoice/payment | Deposit / Sales Receipt     | Default for BTCPay-first / “just take payments.”  |
+| Invoicing | Settled invoice/payment | Payment applied to invoice  | For merchants who already issued a QBO invoice.   |
 
 **Payload Structure:**
 
@@ -701,7 +651,7 @@ Base payload (full payment):
   "amountUsd": 168.32,
   "amountBtc": 0.0025,
   "paidAt": "2025-10-31T16:12:45Z",
-  "mode": "deposit" | "invoicing" | "qbo-first",
+  "mode": "deposit" | "invoicing",
   "reconciliationStatus": "full",
   "notes": "Synced via Sovereign Merchant"
 }
@@ -715,7 +665,7 @@ Partial payment payload:
   "invoiceAmountUsd": 168.32,  // original invoice amount
   "amountBtc": 0.0020,
   "paidAt": "2025-10-31T16:12:45Z",
-  "mode": "invoicing" | "qbo-first",
+  "mode": "invoicing",
   "reconciliationStatus": "partial",
   "notes": "Partial payment via Sovereign Merchant (80% paid)"
 }
@@ -729,7 +679,7 @@ Overpaid payment payload:
   "invoiceAmountUsd": 168.32,  // original invoice amount
   "amountBtc": 0.00275,
   "paidAt": "2025-10-31T16:12:45Z",
-  "mode": "deposit" | "invoicing" | "qbo-first",
+  "mode": "deposit" | "invoicing",
   "reconciliationStatus": "overpaid",
   "overpaymentAmountUsd": 16.83,
   "notes": "Overpaid via Sovereign Merchant (10% overpayment)"
@@ -737,15 +687,14 @@ Overpaid payment payload:
 ```
 
 **Invalidated/Failed Payloads:**
-- `invalidated` status: Do not send to BTCQBO; only log locally that invoice was invalidated
+- `invalidated` status: Do not send to the AccountingProvider; only log locally that invoice was invalidated.
 - `failed` status: Include error details in payload; may be retried automatically or manually
 
 **Payload Notes:**
 - For partial payments: Pass `amountUsd` as the actual paid amount, include `invoiceAmountUsd` for context
-- For QBO-first mode: Include `qboInvoiceId` in payload (from stored mapping) to ensure payment applies to correct QBO invoice
-- BTCQBO decides the exact QBO object type (Deposit vs Payment) based on mode and reconciliation status
+- QuickBooksOnlineProvider decides the exact QBO object type (Deposit vs Payment) based on mode and reconciliation status
 - Overpayments: For deposit mode, create deposit for full invoice amount only; log overpayment separately
-- Overpayments: For invoicing/qbo-first modes, mark invoice as paid in full; log overpayment for credit/refund handling
+- Overpayments: For invoicing mode, mark invoice as paid in full; log overpayment for credit/refund handling
 - Status is determined immediately when invoice is processed (no intermediate pending state)
 - Include BTCPay `additionalStatus` when present so support can see if a payment was late/partial even after expiry
 
@@ -811,77 +760,16 @@ docker build -t sovereign-merchant:latest .
 
 we have to explain to normies that we don’t send the email — BTCPay or QBO does.
 
-two main flows:
-	1.	BTCPay-first
+single v1 flow:
 	•	employee creates invoice in BTCPay
 	•	BTCPay emails payment link
 	•	customer pays
-	•	Sovereign Merchant sees settlement → pushes to QBO
-	2.	QBO-first (your mining host case)
-	•	employee makes invoice in QBO like always
-	•	customer gets normal QBO email
-	•	customer clicks “Pay in Bitcoin” link
-	•	Sovereign Merchant generates a BTCPay invoice right then
-	•	settlement gets pushed back to QBO
+	•	Sovereign Merchant sees settlement → pushes to QBO via the native provider
 
-we should ship a “How this works” page in the UI with those two diagrams.
+we should ship a “How this works” page in the UI with that diagram, and leave a “Coming in v2 (see Roadmap)” teaser rather than documenting the future flow here.
 
 ⸻
 
-17. Just-in-Time (JIT) Bitcoin Payment Flow for QBO-First Merchants
+17. Tax & Legal Disclaimer
 
-problem: BTC price moves too fast to email a fixed BTC amount.
-solution: email the USD invoice → generate BTC quote at payment time.
-
-17.1 flow
-	1.	QBO invoice exists in USD.
-	2.	customer clicks Pay in Bitcoin link.
-	3.	Sovereign Merchant:
-	•	verifies the link (HMAC/signed payload)
-	•	fetches invoice from QBO to confirm amount + invoice id
-	•	calls BTCPay to create invoice now using current store rate
-	4.	BTCPay shows payment page with 30-minute expiry.
-	5.	customer pays.
-	6.	Sovereign Merchant sees settled payment → tells BTCQBO to mark the original QBO invoice paid.
-
-17.2 why 30 minutes?
-	•	15 minutes is e-com friendly but tight for invoices.
-	•	30 minutes gives humans time to open their wallet and broadcast.
-	•	we also support “auto-extend until first confirmation” — once we see a tx before expiry, we keep it alive until 3 blocks.
-
-⸻
-
-18. Sovereign Merchant as Dynamic Invoice Bridge
-
-**Note:** This section details the QBO-first reconciliation mode. See Section 7.2 for the integrated data flow and Section 8 (endpoints #11-13) for API details.
-
-**Definition:** When reconciliation mode is set to `qbo-first`, Sovereign Merchant acts as a dynamic invoice bridge. When a customer clicks a "pay in bitcoin" link for a QBO invoice, the system talks to both QBO and BTCPay, generates a short-lived BTCPay invoice, and then reconciles the payment back to QBO automatically.
-
-18.1 steps
-	1.	customer hits /pay?qboInvoice=INV-12345&sig=...
-	2.	app verifies sig (HMAC with server secret) → protects against amount/id tampering
-	3.	app pulls invoice details from QBO (amount, currency, status)
-	4.	app calls BTCPay:
-	•	create invoice for amountUsd
-	•	expiry: 30 minutes
-	5.	app redirects customer to BTCPay payment page
-	6.	app watches BTCPay invoice:
-	•	if tx broadcast before expiry → auto-extend until 3 blocks
-	•	else → invoice expires, customer can click link again to regenerate
-	7.	on settlement, app triggers BTCQBO to mark QBO invoice as paid
-
-18.2 why the bridge lives here (not in BTCPay)
-	•	Sovereign Merchant has both credentials (QBO + BTCPay)
-	•	Sovereign Merchant can enforce ACLs (access control lists): customers can only pay their invoice; BTCPay can only send webhooks; QBO can only deliver invoice events
-	•	keeps customer invoice privacy — customers can’t enumerate other invoices
-	•	keeps BTCPay simple — it just makes invoices and takes money
-
-18.3 link format (example)
-
-https://sovereign-merchant.local/pay?q=eyJpbnZvaWNlSWQiOiJJTlYtMTIzNDUiLCJhbW91bnRVc2QiOjE2OC4zMiwidmVyc2lvbiI6MX0.&sig=abc123...
-
-	•	q = base64/json of invoice id + amount
-	•	sig = HMAC over q
-	•	if someone tampers with amount → signature fail → we refuse to create BTCPay invoice
-
-⸻
+BTC payments are recorded at the fiat value that BTCPay provides at the time of payment. Sovereign Merchant does not compute, track, or file capital gains/losses, and nothing in this app or documentation constitutes tax or legal advice.
