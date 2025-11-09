@@ -1,0 +1,31 @@
+manifestVersion: 1
+id: sovereign-merchant
+category: finance
+name: Sovereign Merchant
+version: "0.0.1"
+tagline: Automated bookkeeping bridge between BTCPayServer and QuickBooks
+description: >-
+  Sovereign Merchant helps self-hosted Bitcoin merchants automate bookkeeping without surrendering custody or paying third-party subscription fees. By pairing the BTCQBO plugin inside BTCPayServer with a friendly app experience, merchants can install Sovereign Merchant on Start9 or Umbrel, connect QuickBooks Online, and let the system reconcile Bitcoin payments automatically.
+
+  Features:
+  - Automatic reconciliation of BTCPayServer payments to QuickBooks
+  - Support for multiple reconciliation modes (Deposit, Invoicing, QBO-first)
+  - Secure OAuth2 integration with QuickBooks Online
+  - SQLite database with encrypted secrets storage
+  - Webhook processing for real-time payment reconciliation
+  - Self-hosted and sovereign - no third-party dependencies
+
+developer: Sovereign Merchant
+website: https://github.com/sat-engineer/sovereign-merchant
+repo: https://github.com/sat-engineer/sovereign-merchant
+support: https://github.com/sat-engineer/sovereign-merchant/issues
+dependencies:
+  - btcpayserver
+port: 4001
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+releaseNotes: ""
+gallery: []
+submitter: sat-engineer
+submission: https://github.com/getumbrel/umbrel-apps/pull/4020
