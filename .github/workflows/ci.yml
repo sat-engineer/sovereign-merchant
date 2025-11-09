@@ -26,6 +26,11 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
+    - name: Clean install (fix npm optional deps bug)
+      run: |
+        rm -rf node_modules package-lock.json core/node_modules core/package-lock.json web/node_modules web/package-lock.json
+        npm install
+
     - name: Lint
       run: npm run lint
 
@@ -52,6 +57,11 @@ jobs:
 
     - name: Install dependencies
       run: npm ci
+
+    - name: Clean install (fix npm optional deps bug)
+      run: |
+        rm -rf node_modules package-lock.json
+        npm install
 
     - name: Check formatting
       run: npm run format:check
