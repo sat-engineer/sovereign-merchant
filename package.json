@@ -1,0 +1,29 @@
+{
+  "name": "sovereign-merchant",
+  "version": "0.0.1",
+  "description": "Automated bookkeeping bridge between BTCPayServer and QuickBooks",
+  "private": true,
+  "workspaces": [
+    "core",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=core",
+    "dev:web": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=core && npm run build --workspace=web",
+    "start": "npm run start --workspace=core",
+    "lint": "npm run lint --workspace=core && npm run lint --workspace=web",
+    "lint:fix": "npm run lint:fix --workspace=core && npm run lint:fix --workspace=web",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "test": "npm run test --workspace=core && npm run test --workspace=web",
+    "docker:build": "docker build -t sovereign-merchant .",
+    "docker:run": "docker run -p 4001:4001 sovereign-merchant"
+  },
+  "devDependencies": {
+    "prettier": "^3.2.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

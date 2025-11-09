@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install root dependencies
+      run: npm ci
+
+    - name: Install core dependencies
+      run: cd core && npm ci
+
+    - name: Install web dependencies
+      run: cd web && npm ci
+
+    - name: Lint core
+      run: cd core && npm run lint
+
+    - name: Lint web
+      run: cd web && npm run lint
+
+    - name: Type check core
+      run: cd core && npm run build
+
+    - name: Type check web
+      run: cd web && npm run build
+
+    - name: Test core
+      run: cd core && npm test
+
+    - name: Test web
+      run: cd web && npm test
+
+    - name: Build Docker image
+      run: docker build -t sovereign-merchant:test .
+
+  format-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install Prettier
+      run: npm install -g prettier
+
+    - name: Check formatting
+      run: npx prettier --check "**/*.{ts,tsx,js,jsx,json,md}"
