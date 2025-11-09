@@ -12,11 +12,11 @@
     "dev:web": "npm run dev --workspace=web",
     "build": "npm run build --workspace=core && npm run build --workspace=web",
     "start": "npm run start --workspace=core",
+    "test": "npm run test --workspace=core && npm run test --workspace=web",
     "lint": "npm run lint --workspace=core && npm run lint --workspace=web",
     "lint:fix": "npm run lint:fix --workspace=core && npm run lint:fix --workspace=web",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
-    "test": "npm run test --workspace=core && npm run test --workspace=web",
     "docker:build": "docker build -t sovereign-merchant .",
     "docker:run": "docker run -p 4001:4001 sovereign-merchant"
   },

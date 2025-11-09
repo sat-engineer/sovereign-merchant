@@ -23,32 +23,17 @@ jobs:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
 
-    - name: Install root dependencies
+    - name: Install dependencies
       run: npm ci
 
-    - name: Install core dependencies
-      run: cd core && npm ci
+    - name: Lint
+      run: npm run lint
 
-    - name: Install web dependencies
-      run: cd web && npm ci
+    - name: Type check
+      run: npm run build
 
-    - name: Lint core
-      run: cd core && npm run lint
-
-    - name: Lint web
-      run: cd web && npm run lint
-
-    - name: Type check core
-      run: cd core && npm run build
-
-    - name: Type check web
-      run: cd web && npm run build
-
-    - name: Test core
-      run: cd core && npm test
-
-    - name: Test web
-      run: cd web && npm test
+    - name: Test
+      run: npm test
 
     - name: Build Docker image
       run: docker build -t sovereign-merchant:test .
@@ -65,8 +50,8 @@ jobs:
         node-version: '20'
         cache: 'npm'
 
-    - name: Install Prettier
-      run: npm install -g prettier
+    - name: Install dependencies
+      run: npm ci
 
     - name: Check formatting
-      run: npx prettier --check "**/*.{ts,tsx,js,jsx,json,md}"
+      run: npm run format:check
