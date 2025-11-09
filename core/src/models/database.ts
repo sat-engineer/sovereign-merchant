@@ -9,39 +9,64 @@ export async function initializeDatabase(): Promise<void> {
   try {
     db = new Database(dbPath);
 
-    // Enable WAL mode for better concurrency
-    db.pragma('journal_mode = WAL');
+    // Security and performance optimizations
+    db.pragma('journal_mode = WAL'); // Write-Ahead Logging for concurrency
+    db.pragma('foreign_keys = ON'); // Enable foreign key constraints
+    db.pragma('synchronous = NORMAL'); // Balance performance vs safety
+    db.pragma('cache_size = -64000'); // 64MB cache
 
-    // Create basic tables
+    // Create basic tables with proper constraints
     db.exec(`
+      -- Configuration storage with optional encryption
+      -- Used for storing app settings, API keys, and other configuration
       CREATE TABLE IF NOT EXISTS config (
-        key TEXT PRIMARY KEY,
-        value TEXT,
-        encrypted BOOLEAN DEFAULT FALSE,
+        key TEXT PRIMARY KEY,                    -- Unique configuration key
+        value TEXT NOT NULL,                     -- Configuration value (may be encrypted)
+        encrypted BOOLEAN DEFAULT FALSE,         -- Whether value is encrypted at rest
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- Payment reconciliation records
+      -- Links BTCPayServer invoices to QuickBooks transactions
       CREATE TABLE IF NOT EXISTS reconciliations (
-        id TEXT PRIMARY KEY,
-        btcpay_invoice_id TEXT,
-        quickbooks_transaction_id TEXT,
-        amount_sats INTEGER,
-        amount_fiat INTEGER, -- Stored in smallest currency unit (cents for USD, etc.)
-        currency TEXT,
-        status TEXT DEFAULT 'pending',
+        id TEXT PRIMARY KEY,                     -- UUID for the reconciliation record
+        btcpay_invoice_id TEXT UNIQUE,           -- BTCPayServer invoice ID (nullable until processed)
+        quickbooks_transaction_id TEXT UNIQUE,   -- QuickBooks transaction ID (nullable until processed)
+        amount_sats INTEGER NOT NULL,            -- Bitcoin amount in satoshis
+        amount_fiat INTEGER NOT NULL,            -- Fiat amount in smallest currency unit (cents for USD)
+        currency TEXT NOT NULL,                  -- Currency code (USD, EUR, etc.)
+        status TEXT NOT NULL DEFAULT 'pending'  -- Status: pending, processing, completed, failed
+          CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        processed_at DATETIME
+        processed_at DATETIME,                   -- When reconciliation was completed
+        error_message TEXT                       -- Error details if status is 'failed'
       );
 
+      -- Application logs for debugging and monitoring
       CREATE TABLE IF NOT EXISTS logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        level TEXT,
-        message TEXT,
-        data TEXT,
+        level TEXT NOT NULL                      -- Log level: debug, info, warn, error
+          CHECK (level IN ('debug', 'info', 'warn', 'error')),
+        message TEXT NOT NULL,                   -- Log message
+        data TEXT,                               -- Optional JSON data payload
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- Add indexes for performance (to be implemented later)
+      -- CREATE INDEX idx_reconciliations_status ON reconciliations(status);
+      -- CREATE INDEX idx_reconciliations_created_at ON reconciliations(created_at);
+      -- CREATE INDEX idx_logs_level_created_at ON logs(level, created_at);
     `);
+
+    // Verify database file has correct permissions
+    const fs = await import('fs');
+    try {
+      await fs.promises.access(dbPath, fs.constants.R_OK | fs.constants.W_OK);
+      console.log('✅ Database file permissions verified');
+    } catch (error) {
+      console.warn('⚠️  Database file permission check failed:', error);
+    }
 
     console.log('✅ Database initialized successfully');
   } catch (error) {

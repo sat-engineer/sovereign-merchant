@@ -39,8 +39,8 @@ RUN cd core && npm ci --only=production
 # Create data directory for SQLite
 RUN mkdir -p /data
 
-# Expose port
-EXPOSE 3000
+# Expose port (matches Umbrel configuration)
+EXPOSE 4001
 
 # Set environment variables
 ENV NODE_ENV=production
