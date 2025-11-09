@@ -7,7 +7,7 @@ import { initializeDatabase } from './models/database';
 
 async function startServer() {
   const fastify = Fastify({
-    logger: true
+    logger: true,
   });
 
   // Register plugins
