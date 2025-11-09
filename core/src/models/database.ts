@@ -27,7 +27,7 @@ export async function initializeDatabase(): Promise<void> {
         btcpay_invoice_id TEXT,
         quickbooks_transaction_id TEXT,
         amount_sats INTEGER,
-        amount_fiat REAL,
+        amount_fiat INTEGER, -- Stored in smallest currency unit (cents for USD, etc.)
         currency TEXT,
         status TEXT DEFAULT 'pending',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
