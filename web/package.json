@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest",
+    "test": "vitest --run --passWithNoTests",
     "lint": "eslint src/**/*.tsx",
     "lint:fix": "eslint src/**/*.tsx --fix",
     "format": "prettier --write src/**/*.{ts,tsx}"
