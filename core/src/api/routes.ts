@@ -7,7 +7,7 @@ export const apiRoutes: FastifyPluginAsync = async (fastify) => {
     return {
       status: 'ok',
       message: 'Sovereign Merchant API is running',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
   });
 
@@ -16,7 +16,7 @@ export const apiRoutes: FastifyPluginAsync = async (fastify) => {
     return {
       btcpayConfigured: false,
       quickbooksConfigured: false,
-      setupComplete: false
+      setupComplete: false,
     };
   });
 

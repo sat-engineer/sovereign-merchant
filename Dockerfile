@@ -39,7 +39,7 @@ RUN cd core && npm ci --only=production
 # Create data directory for SQLite
 RUN mkdir -p /data
 
-# Expose port (matches Umbrel configuration)
+# Expose port
 EXPOSE 4001
 
 # Set environment variables

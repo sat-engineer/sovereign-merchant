@@ -123,6 +123,7 @@ umbreld client apps.uninstall.mutate --appId sovereign-merchant
 ```
 
 For umbrel-dev, use:
+
 ```bash
 npm run dev client -- apps.install.mutate -- --appId sovereign-merchant
 ```

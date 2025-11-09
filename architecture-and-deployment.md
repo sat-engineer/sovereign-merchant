@@ -23,7 +23,7 @@ Sovereign Merchant is meant to sit next to a self-hosted BTCPay Server and Bitco
 - Private keys stay in:
   - your hardware wallet, or
   - another external signer you control.
-- BTCPay derives receive addresses from the xpub and never needs to hold your seed.  [oai_citation:0‡BTCPay Server](https://docs.btcpayserver.org/FAQ/Wallet/?utm_source=chatgpt.com)
+- BTCPay derives receive addresses from the xpub and never needs to hold your seed. [oai_citation:0‡BTCPay Server](https://docs.btcpayserver.org/FAQ/Wallet/?utm_source=chatgpt.com)
 
 The VPS is stateless and disposable. If it dies, you redeploy it; no funds are at risk.
 
@@ -46,7 +46,7 @@ The VPS is stateless and disposable. If it dies, you redeploy it; no funds are a
 - Encrypted BTCPay API keys & QuickBooks tokens
 - Local logs & reconciliation state
 
-**Does *not* store (by recommendation):**
+**Does _not_ store (by recommendation):**
 
 - Spending private keys (seeds)
 - Custodial balances
@@ -76,7 +76,7 @@ The VPS is stateless and disposable. If it dies, you redeploy it; no funds are a
   - ideally over Tor hidden service (BTCPay supports this officially), or
   - over a secure VPN/tunnel.
 
-BTCPay’s own docs recommend this kind of “VPS as reverse proxy to Tor” pattern to hide your node IP and simplify certs.  [oai_citation:1‡BTCPay Server](https://docs.btcpayserver.org/Deployment/ReverseProxyToTor/?utm_source=chatgpt.com)
+BTCPay’s own docs recommend this kind of “VPS as reverse proxy to Tor” pattern to hide your node IP and simplify certs. [oai_citation:1‡BTCPay Server](https://docs.btcpayserver.org/Deployment/ReverseProxyToTor/?utm_source=chatgpt.com)
 
 **Does NOT:**
 
@@ -85,6 +85,7 @@ BTCPay’s own docs recommend this kind of “VPS as reverse proxy to Tor” pat
 - Run business logic (it’s just a smart pipe).
 
 If compromised:
+
 - Rebuild it.
 - Rotate secrets (if any).
 - Your node and funds remain under your control.
@@ -114,8 +115,8 @@ If compromised:
   - BTCPay + Sovereign Merchant are open source; no per-transaction rake.
 
 - **Aligns with BTCPay best practices**
-  - Uses Greenfield API + webhooks for integration.  [oai_citation:2‡BTCPay Server](https://docs.btcpayserver.org/API/Greenfield/v1/?utm_source=chatgpt.com)
-  - Encourages watch-only / hardware wallet setups, consistent with BTCPay guidance.  [oai_citation:3‡BTCPay Server](https://docs.btcpayserver.org/FAQ/Wallet/?utm_source=chatgpt.com)
+  - Uses Greenfield API + webhooks for integration. [oai_citation:2‡BTCPay Server](https://docs.btcpayserver.org/API/Greenfield/v1/?utm_source=chatgpt.com)
+  - Encourages watch-only / hardware wallet setups, consistent with BTCPay guidance. [oai_citation:3‡BTCPay Server](https://docs.btcpayserver.org/FAQ/Wallet/?utm_source=chatgpt.com)
 
 ---
 
@@ -196,7 +197,7 @@ Good for testing and some niche deployments; not the default for your “normie 
 
 **Integration stance:**
 
-- Uses BTCPay’s Greenfield API + webhooks to observe invoices and payments.  [oai_citation:4‡BTCPay Server](https://docs.btcpayserver.org/API/Greenfield/v1/?utm_source=chatgpt.com)
+- Uses BTCPay’s Greenfield API + webhooks to observe invoices and payments. [oai_citation:4‡BTCPay Server](https://docs.btcpayserver.org/API/Greenfield/v1/?utm_source=chatgpt.com)
 - Uses a first-party `AccountingProvider` abstraction to talk to accounting systems.
 - v1 ships:
   - `QuickBooksOnlineProvider`
@@ -231,13 +232,14 @@ All of this rides on the same architecture: node does the logic; VPS just fronts
 This doc is neutral, but your model can be:
 
 - Software: MIT/OSS.
-- Revenue: 
+- Revenue:
   - device setup,
   - BTCPay + Sovereign Merchant install,
   - domain + reverse proxy configuration,
   - “we’ll sit with your accountant / ops and make sure it’s right.”
 
 Merchants already pay far more for:
+
 - Stripe fees,
 - QuickBooks add-ons,
 - random consultants.
@@ -257,6 +259,7 @@ Merchants already pay far more for:
   - what’s optional.
 
 The two together give:
+
 - devs a clear implementation target,
 - merchants a clear mental model,
 - you a repeatable deployment story.
