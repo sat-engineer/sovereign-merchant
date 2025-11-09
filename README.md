@@ -79,11 +79,86 @@ sovereign-merchant/
 │       └── api/           # Shared TypeScript types generated from backend
 ├── apps/
 │   ├── start9/            # Start9 packaging (manifest, instructions, icon)
-│   └── umbrel/            # Umbrel packaging (app manifest, docker-compose)
+│   └── umbrel/            # Umbrel packaging (app manifest, docker-compose, assets)
 ├── Dockerfile             # Multi-stage build for single container image
 ├── product-and-tech-spec.md
 ├── feedback.md
 └── LICENSE
+```
+
+---
+
+## Umbrel Packaging (Hello World Stub)
+
+The Umbrel scaffolding in `apps/umbrel/` is intentionally minimal so we can reserve the app ID and
+validate dependency wiring before dropping in the real Node/TypeScript services. The placeholder
+Docker Compose file starts an `nginx` container that simply serves `apps/umbrel/html/index.html`
+with a `hello world` page, while `umbrel-app.yml` declares BTCPayServer as a dependency to mirror
+the eventual production requirements. Swap the container image and mount points once the real app
+is ready.
+
+### Syncing to an Umbrel Node
+
+Use `scripts/package-umbrel-app.sh` to mirror the `apps/umbrel/` directory onto an Umbrel
+app-store path via `rsync` (matches the Umbrel docs workflow). The script defaults to
+`umbrel@192.168.1.168` for now:
+
+```bash
+./scripts/package-umbrel-app.sh
+# Defaults to umbrel@192.168.1.168 and the standard app-store path
+```
+
+Pass explicit host/path args or set `UMBREL_HOST`/`UMBREL_REMOTE_PATH` if your setup differs. Include
+`--dry-run` to preview changes. After syncing, install/refresh the app from the Umbrel UI, or use the command line:
+
+```bash
+# Install the app
+umbreld client apps.install.mutate --appId sovereign-merchant
+
+# Restart the app (after making changes)
+umbreld client apps.restart.mutate --appId sovereign-merchant
+
+# Uninstall the app
+umbreld client apps.uninstall.mutate --appId sovereign-merchant
+```
+
+For umbrel-dev, use:
+```bash
+npm run dev client -- apps.install.mutate -- --appId sovereign-merchant
+```
+
+#### macOS LAN Troubleshooting
+
+If `ping 192.168.1.168` (or your Umbrel's IP) returns `No route to host` even though both devices are
+on `192.168.1.x`, macOS may have cached a bogus host route (common after using VPN/tunnel adapters).
+Flush the host/ARP entries and add an explicit route:
+
+```bash
+sudo route delete umbrel 2>/dev/null
+sudo route -n delete 192.168.1.168 2>/dev/null
+sudo arp -d 192.168.1.168
+dscacheutil -flushcache
+sudo route -n add -host 192.168.1.168 192.168.1.1
+```
+
+Replace the IPs above if your Umbrel or gateway differ. After the static route is added, `ping` and
+`ssh umbrel@192.168.1.168` should succeed, and the sync script will work again.
+
+#### Restoring the App Store (When rsync Goes Wrong)
+
+If you accidentally clobber your Umbrel app store during development, restore it like this:
+
+```bash
+# SSH into your Umbrel
+ssh umbrel@192.168.1.168
+
+# Navigate to app-stores and restore
+cd ~/umbrel/app-stores
+rm -rf getumbrel-umbrel-apps-github-53f74447  # Careful—this wipes your custom app too
+git clone https://github.com/getumbrel/umbrel-apps.git getumbrel-umbrel-apps-github-53f74447
+
+# Exit SSH and try your sync again
+exit
 ```
 
 ---
