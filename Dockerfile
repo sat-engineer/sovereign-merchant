@@ -9,8 +9,8 @@ COPY core/package*.json ./core/
 COPY web/package*.json ./web/
 
 # Install dependencies
-RUN cd core && npm ci
-RUN cd web && npm ci
+RUN cd core && npm install
+RUN cd web && npm install
 
 # Copy source code
 COPY core/ ./core/
