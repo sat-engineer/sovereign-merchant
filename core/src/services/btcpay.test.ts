@@ -199,8 +199,12 @@ describe('BTCPayServer', () => {
   describe('generateWebhookSecret', () => {
     it('should generate a non-empty secret', () => {
       // Access private method for testing
-      const secret1 = (btcpayClient as unknown as { generateWebhookSecret: () => string }).generateWebhookSecret();
-      const secret2 = (btcpayClient as unknown as { generateWebhookSecret: () => string }).generateWebhookSecret();
+      const secret1 = (
+        btcpayClient as unknown as { generateWebhookSecret: () => string }
+      ).generateWebhookSecret();
+      const secret2 = (
+        btcpayClient as unknown as { generateWebhookSecret: () => string }
+      ).generateWebhookSecret();
 
       expect(secret1).toBeDefined();
       expect(secret1.length).toBeGreaterThan(0);

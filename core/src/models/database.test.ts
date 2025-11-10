@@ -79,8 +79,10 @@ describe('Database', () => {
     it('should include webhook_events table in schema', async () => {
       await initializeDatabase();
 
-      const execCall = mockDb.exec.mock.calls.find((call: unknown[]) =>
-        typeof call[0] === 'string' && call[0].includes('CREATE TABLE IF NOT EXISTS webhook_events')
+      const execCall = mockDb.exec.mock.calls.find(
+        (call: unknown[]) =>
+          typeof call[0] === 'string' &&
+          call[0].includes('CREATE TABLE IF NOT EXISTS webhook_events')
       );
 
       expect(execCall).toBeDefined();
