@@ -99,6 +99,57 @@ is ready.
 
 ### Syncing to an Umbrel Node
 
+Publish the docker image
+
+```
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --tag satengineer/sovereign-merchant:v0.0.1 \
+  --push \
+  .
+```
+
+Run this to get the sha of the docker image
+
+```
+docker buildx imagetools inspect satengineer/sovereign-merchant:v0.0.1 --format '{{json .Manifest.Digest}}' | tr -d '"'
+```
+
+Paste the corresponding sha into your local umbrel-apps fork: umbrel-apps/sovereign-merchant/docker-compose.yml in the web/image section
+
+```
+web:
+    image: satengineer/sovereign-merchant:v0.0.1@sha256:3220b3ff0b52539f5c62615d55199b321cac58d4414ac3aaa76a6a25473e15cb
+```
+
+Commit and push.
+
+On your umbrel, cd into the following directory
+
+```
+cd /home/umbrel/umbrel/app-stores/getumbrel-umbrel-apps-github-53f74447
+```
+
+set the remote to the custom fork
+
+```
+git remote set-url origin https://github.com/sat-engineer/umbrel-apps.git
+```
+
+then
+
+```
+git pull
+```
+
+Once running, run
+
+```
+sudo docker logs sovereign-merchant_web_1
+```
+
+to grab logs.
+
 Use `scripts/package-umbrel-app.sh` to mirror the `apps/umbrel/` directory onto an Umbrel
 app-store path via `rsync` (matches the Umbrel docs workflow). The script defaults to
 `umbrel@192.168.1.168` for now:

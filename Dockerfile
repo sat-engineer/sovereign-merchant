@@ -34,7 +34,7 @@ COPY --from=base /app/core/package*.json ./core/
 COPY --from=base /app/web/dist ./web/dist
 
 # Install only production dependencies for core
-RUN cd core && npm ci --only=production
+RUN cd core && npm install --only=production
 
 # Create data directory for SQLite
 RUN mkdir -p /data
