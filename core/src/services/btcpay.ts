@@ -101,27 +101,27 @@ export class BTCPayServer {
     // Test umbrel.local resolution
     try {
       const address = await new Promise<string>((resolve, reject) => {
-        dns.lookup('umbrel.local', (err: any, address: string) => {
+        dns.lookup('umbrel.local', (err: Error | null, address: string) => {
           if (err) reject(err);
           else resolve(address);
         });
       });
       console.log('🌐 umbrel.local resolves to:', address);
-    } catch (err: any) {
-      console.log('🌐 umbrel.local DNS lookup failed:', err.message);
+    } catch (err: unknown) {
+      console.log('🌐 umbrel.local DNS lookup failed:', err instanceof Error ? err.message : String(err));
     }
 
     // Test localhost resolution
     try {
       const localhostAddress = await new Promise<string>((resolve, reject) => {
-        dns.lookup('localhost', (err: any, address: string) => {
+        dns.lookup('localhost', (err: Error | null, address: string) => {
           if (err) reject(err);
           else resolve(address);
         });
       });
       console.log('🌐 localhost resolves to:', localhostAddress);
-    } catch (err: any) {
-      console.log('🌐 localhost DNS lookup failed:', err.message);
+    } catch (err: unknown) {
+      console.log('🌐 localhost DNS lookup failed:', err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -286,7 +286,7 @@ export class BTCPayServer {
   /**
    * Get server information
    */
-  async getServerInfo(): Promise<any> {
+  async getServerInfo(): Promise<unknown> {
     if (!(await this.ensureConnection())) {
       throw new Error('BTCPayServer not connected');
     }

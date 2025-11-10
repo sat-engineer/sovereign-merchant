@@ -6,6 +6,12 @@ import { BTCPayServer } from './btcpay';
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios);
 
+// Mock axios client interface
+interface MockAxiosClient {
+  get?: ReturnType<typeof vi.fn>;
+  post?: ReturnType<typeof vi.fn>;
+}
+
 // Mock the database module
 vi.mock('../models/database', () => ({
   getDatabase: vi.fn(() => ({
@@ -33,7 +39,7 @@ describe('BTCPayServer', () => {
       const mockClient = {
         get: vi.fn().mockResolvedValue({ status: 200 }),
       };
-      mockedAxios.create.mockReturnValue(mockClient as any);
+      mockedAxios.create.mockReturnValue(mockClient as MockAxiosClient);
 
       const result = await btcpayClient.isConnected();
       expect(result).toBe(true);
@@ -44,7 +50,7 @@ describe('BTCPayServer', () => {
       const mockClient = {
         get: vi.fn().mockRejectedValue(new Error('Connection failed')),
       };
-      mockedAxios.create.mockReturnValue(mockClient as any);
+      mockedAxios.create.mockReturnValue(mockClient as MockAxiosClient);
 
       const result = await btcpayClient.isConnected();
       expect(result).toBe(false);
@@ -62,13 +68,13 @@ describe('BTCPayServer', () => {
       const mockConnectionClient = {
         get: vi.fn().mockResolvedValue({ status: 200 }),
       };
-      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as MockAxiosClient);
 
       // Then mock the main client
       const mockMainClient = {
         get: vi.fn().mockResolvedValue({ data: mockServerInfo }),
       };
-      mockedAxios.create.mockReturnValueOnce(mockMainClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockMainClient as MockAxiosClient);
 
       const result = await btcpayClient.getServerInfo();
       expect(result).toEqual(mockServerInfo);
@@ -79,13 +85,13 @@ describe('BTCPayServer', () => {
       const mockConnectionClient = {
         get: vi.fn().mockResolvedValue({ status: 200 }),
       };
-      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as MockAxiosClient);
 
       // Then mock server info failure
       const mockMainClient = {
         get: vi.fn().mockRejectedValue(new Error('Request failed')),
       };
-      mockedAxios.create.mockReturnValueOnce(mockMainClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockMainClient as MockAxiosClient);
 
       await expect(btcpayClient.getServerInfo()).rejects.toThrow('Request failed');
     });
@@ -97,7 +103,7 @@ describe('BTCPayServer', () => {
       const mockConnectionClient = {
         get: vi.fn().mockResolvedValue({ status: 200 }),
       };
-      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as MockAxiosClient);
 
       // Then mock the main client for webhook registration
       const mockMainClient = {
@@ -110,7 +116,7 @@ describe('BTCPayServer', () => {
           },
         }),
       };
-      mockedAxios.create.mockReturnValueOnce(mockMainClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockMainClient as MockAxiosClient);
 
       const result = await btcpayClient.registerWebhook(
         'http://localhost:4001/api/webhooks/btcpay'
@@ -130,13 +136,13 @@ describe('BTCPayServer', () => {
       const mockConnectionClient = {
         get: vi.fn().mockResolvedValue({ status: 200 }),
       };
-      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as MockAxiosClient);
 
       // Then mock the main client to fail
       const mockMainClient = {
         post: vi.fn().mockRejectedValue(new Error('Registration failed')),
       };
-      mockedAxios.create.mockReturnValueOnce(mockMainClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockMainClient as MockAxiosClient);
 
       const result = await btcpayClient.registerWebhook(
         'http://localhost:4001/api/webhooks/btcpay'
@@ -160,13 +166,13 @@ describe('BTCPayServer', () => {
       const mockConnectionClient = {
         get: vi.fn().mockResolvedValue({ status: 200 }),
       };
-      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as MockAxiosClient);
 
       // Then mock the main client for webhooks fetch
       const mockMainClient = {
         get: vi.fn().mockResolvedValue({ data: mockWebhooks }),
       };
-      mockedAxios.create.mockReturnValueOnce(mockMainClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockMainClient as MockAxiosClient);
 
       const result = await btcpayClient.getWebhooks();
       expect(result).toEqual(mockWebhooks);
@@ -177,13 +183,13 @@ describe('BTCPayServer', () => {
       const mockConnectionClient = {
         get: vi.fn().mockResolvedValue({ status: 200 }),
       };
-      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockConnectionClient as MockAxiosClient);
 
       // Then mock the main client to fail
       const mockMainClient = {
         get: vi.fn().mockRejectedValue(new Error('Fetch failed')),
       };
-      mockedAxios.create.mockReturnValueOnce(mockMainClient as any);
+      mockedAxios.create.mockReturnValueOnce(mockMainClient as MockAxiosClient);
 
       const result = await btcpayClient.getWebhooks();
       expect(result).toEqual([]);
@@ -192,8 +198,9 @@ describe('BTCPayServer', () => {
 
   describe('generateWebhookSecret', () => {
     it('should generate a non-empty secret', () => {
-      const secret1 = (btcpayClient as any).generateWebhookSecret();
-      const secret2 = (btcpayClient as any).generateWebhookSecret();
+      // Access private method for testing
+      const secret1 = (btcpayClient as unknown as { generateWebhookSecret: () => string }).generateWebhookSecret();
+      const secret2 = (btcpayClient as unknown as { generateWebhookSecret: () => string }).generateWebhookSecret();
 
       expect(secret1).toBeDefined();
       expect(secret1.length).toBeGreaterThan(0);

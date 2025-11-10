@@ -130,7 +130,7 @@ const btcpayRoutes: FastifyPluginAsync = async (fastify) => {
 // Webhook processing routes
 const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/btcpay', async (request, reply) => {
-    const payload = request.body as any;
+    const payload = request.body as unknown;
 
     // Basic validation - check if it's a valid webhook payload
     if (!payload || typeof payload !== 'object') {

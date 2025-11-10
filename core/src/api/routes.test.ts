@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { FastifyInstance } from 'fastify';
 import { apiRoutes } from './routes';
 import { btcpayClient } from '../services/btcpay';
 
@@ -18,7 +19,7 @@ vi.mock('../services/btcpay', () => ({
 const mockedBTCPayClient = vi.mocked(btcpayClient);
 
 describe('API Routes', () => {
-  let app: any;
+  let app: FastifyInstance;
 
   beforeEach(async () => {
     // Create a test Fastify instance
