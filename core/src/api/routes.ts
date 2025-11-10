@@ -2,6 +2,13 @@ import { FastifyPluginAsync } from 'fastify';
 import { btcpayClient } from '../services/btcpay';
 import { getDatabase } from '../models/database';
 
+interface BTCPayWebhookPayload {
+  type?: string;
+  invoiceId?: string;
+  storeId?: string;
+  [key: string]: unknown;
+}
+
 // Health and status routes
 const statusRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/status', async () => {
@@ -33,12 +40,13 @@ const btcpayRoutes: FastifyPluginAsync = async (fastify) => {
     if (isConnected && isAuthenticated) {
       try {
         const serverInfo = await btcpayClient.getServerInfo();
+        const serverInfoData = serverInfo as { version?: string; onion?: string };
         return {
           connected: true,
           authenticated: true,
           serverInfo: {
-            version: serverInfo.version,
-            onion: serverInfo.onion,
+            version: serverInfoData.version,
+            onion: serverInfoData.onion,
           },
         };
       } catch (error) {
@@ -139,6 +147,8 @@ const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    const webhookPayload = payload as BTCPayWebhookPayload;
+
     try {
       const db = getDatabase();
 
@@ -153,18 +163,18 @@ const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       insertStmt.run(
         webhookId,
-        payload.type || 'unknown',
-        payload.invoiceId || null,
-        payload.storeId || null,
+        webhookPayload.type || 'unknown',
+        webhookPayload.invoiceId || null,
+        webhookPayload.storeId || null,
         JSON.stringify(payload)
       );
 
-      console.log(`✅ Stored BTCPay webhook event: ${webhookId} (${payload.type})`);
+      console.log(`✅ Stored BTCPay webhook event: ${webhookId} (${webhookPayload.type})`);
 
       reply.code(200).send({
         received: true,
-        eventType: payload.type || 'unknown',
-        invoiceId: payload.invoiceId || null,
+        eventType: webhookPayload.type || 'unknown',
+        invoiceId: webhookPayload.invoiceId || null,
         stored: true,
         webhookId: webhookId,
       });
