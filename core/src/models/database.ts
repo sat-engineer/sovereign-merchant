@@ -53,6 +53,19 @@ export async function initializeDatabase(): Promise<void> {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- BTCPayServer webhook events
+      -- Stores incoming webhook notifications from BTCPayServer
+      CREATE TABLE IF NOT EXISTS webhook_events (
+        id TEXT PRIMARY KEY,                     -- Webhook delivery ID from BTCPayServer
+        event_type TEXT NOT NULL,                -- Event type (invoice_created, invoice_paid, etc.)
+        invoice_id TEXT,                         -- BTCPayServer invoice ID
+        store_id TEXT,                           -- BTCPayServer store ID
+        payload TEXT NOT NULL,                   -- Full webhook payload as JSON
+        processed BOOLEAN DEFAULT FALSE,         -- Whether this event has been processed
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        processed_at DATETIME                    -- When the event was processed
+      );
+
       -- Add indexes for performance (to be implemented later)
       -- CREATE INDEX idx_reconciliations_status ON reconciliations(status);
       -- CREATE INDEX idx_reconciliations_created_at ON reconciliations(created_at);
@@ -87,4 +100,12 @@ export function closeDatabase(): void {
     db.close();
     db = null;
   }
+}
+
+// Test helper function to reset database state
+export function _resetDatabaseForTesting(): void {
+  if (db) {
+    db.close();
+  }
+  db = null;
 }
