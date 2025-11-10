@@ -108,7 +108,10 @@ export class BTCPayServer {
       });
       console.log('🌐 umbrel.local resolves to:', address);
     } catch (err: unknown) {
-      console.log('🌐 umbrel.local DNS lookup failed:', err instanceof Error ? err.message : String(err));
+      console.log(
+        '🌐 umbrel.local DNS lookup failed:',
+        err instanceof Error ? err.message : String(err)
+      );
     }
 
     // Test localhost resolution
@@ -121,7 +124,10 @@ export class BTCPayServer {
       });
       console.log('🌐 localhost resolves to:', localhostAddress);
     } catch (err: unknown) {
-      console.log('🌐 localhost DNS lookup failed:', err instanceof Error ? err.message : String(err));
+      console.log(
+        '🌐 localhost DNS lookup failed:',
+        err instanceof Error ? err.message : String(err)
+      );
     }
   }
 
