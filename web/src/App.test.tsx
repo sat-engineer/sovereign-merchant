@@ -154,7 +154,6 @@ describe('App', () => {
         expect(mockedAxios.get).toHaveBeenCalledTimes(6); // Initial + refresh calls
       });
     });
-
   });
 
   describe('API Key Modal', () => {

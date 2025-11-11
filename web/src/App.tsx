@@ -154,7 +154,8 @@ function App() {
 
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 403) {
-          errorMessage = 'API key does not have permission to view webhooks. Please check your API key permissions.';
+          errorMessage =
+            'API key does not have permission to view webhooks. Please check your API key permissions.';
         } else if (error.response?.status === 401) {
           errorMessage = 'API key is invalid or expired.';
         } else if (error.response?.data?.error) {
@@ -210,7 +211,6 @@ function App() {
       alert('Failed to save API key. Check console for details.');
     }
   };
-
 
   return (
     <div className="App">
@@ -355,14 +355,14 @@ function App() {
                       {webhooks.map((webhook) => (
                         <div key={webhook.id} className="webhook-item">
                           <div className="webhook-header">
-                            <span className={`webhook-status ${webhook.active ? 'active' : 'inactive'}`}>
+                            <span
+                              className={`webhook-status ${webhook.active ? 'active' : 'inactive'}`}
+                            >
                               {webhook.active ? '🟢' : '🔴'}
                             </span>
                             <strong>{webhook.url}</strong>
                           </div>
-                          <div className="webhook-events">
-                            Events: {webhook.events.join(', ')}
-                          </div>
+                          <div className="webhook-events">Events: {webhook.events.join(', ')}</div>
                         </div>
                       ))}
                     </div>
@@ -395,12 +395,17 @@ function App() {
                       {settledInvoices.map((invoice) => (
                         <div key={invoice.id} className="invoice-item">
                           <div className="invoice-header">
-                            <span className={`invoice-status ${invoice.quickbooksStatus === 'sent_to_quickbooks' ? 'sent' : 'pending'}`}>
+                            <span
+                              className={`invoice-status ${invoice.quickbooksStatus === 'sent_to_quickbooks' ? 'sent' : 'pending'}`}
+                            >
                               {invoice.quickbooksStatus === 'sent_to_quickbooks' ? '✅' : '⏳'}
                             </span>
                             <strong>{invoice.invoiceId}</strong>
                             <span className="invoice-amount">
-                              {typeof invoice.amount === 'number' ? `$${invoice.amount.toFixed(2)}` : invoice.amount} {invoice.currency}
+                              {typeof invoice.amount === 'number'
+                                ? `$${invoice.amount.toFixed(2)}`
+                                : invoice.amount}{' '}
+                              {invoice.currency}
                             </span>
                           </div>
                           <div className="invoice-details">

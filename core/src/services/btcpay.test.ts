@@ -158,8 +158,8 @@ describe('BTCPayServer', () => {
           enabled: true,
           authorizedEvents: {
             everything: false,
-            specificEvents: ['InvoiceSettled', 'InvoiceReceivedPayment']
-          }
+            specificEvents: ['InvoiceSettled', 'InvoiceReceivedPayment'],
+          },
         },
       ];
 
@@ -207,8 +207,8 @@ describe('BTCPayServer', () => {
         {
           id: 'store_123',
           name: 'Test Store',
-          url: 'https://btcpay.example.com/stores/store_123'
-        }
+          url: 'https://btcpay.example.com/stores/store_123',
+        },
       ];
 
       const mockClient = createMockClient();

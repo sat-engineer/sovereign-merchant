@@ -357,7 +357,7 @@ export class BTCPayServer {
         url: webhookUrl,
         authorizedEvents: {
           everything: false,
-          specificEvents: events
+          specificEvents: events,
         },
         secret: this.generateWebhookSecret(),
       };
@@ -414,19 +414,21 @@ export class BTCPayServer {
       const response = await this.client!.get(`/api/v1/stores/${storeId}/webhooks`);
 
       // Transform the response to match our WebhookData interface
-      return response.data.map((webhook: {
-        id: string;
-        url: string;
-        enabled: boolean;
-        authorizedEvents?: { specificEvents?: string[] };
-        secret?: string;
-      }) => ({
-        id: webhook.id,
-        url: webhook.url,
-        events: webhook.authorizedEvents?.specificEvents || [],
-        active: webhook.enabled,
-        secret: webhook.secret,
-      }));
+      return response.data.map(
+        (webhook: {
+          id: string;
+          url: string;
+          enabled: boolean;
+          authorizedEvents?: { specificEvents?: string[] };
+          secret?: string;
+        }) => ({
+          id: webhook.id,
+          url: webhook.url,
+          events: webhook.authorizedEvents?.specificEvents || [],
+          active: webhook.enabled,
+          secret: webhook.secret,
+        })
+      );
     } catch (error) {
       console.error('Failed to get webhooks:', error);
       return [];

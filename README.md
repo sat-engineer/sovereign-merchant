@@ -322,6 +322,36 @@ The multi-stage Dockerfile compiles the frontend, bundles the backend, and sets 
 3. Run backend and frontend locally (see above) and, when available, execute automated tests.
 4. Submit a PR, referencing any spec sections you implemented or deviated from.
 
+### Pre-commit Hooks
+
+This project uses automated code formatting with [Prettier](https://prettier.io/) and includes a pre-commit git hook to ensure consistent code style:
+
+- **Automatic formatting**: All TypeScript, JavaScript, JSON, and Markdown files are automatically formatted according to our Prettier configuration
+- **Pre-commit validation**: The git hook runs `npm run format:check` before each commit to verify formatting
+- **Auto-fix on failure**: If formatting issues are found, the hook automatically runs `npm run format` to fix them and prevents the commit
+- **Manual formatting**: You can also run `npm run format` manually to format code at any time
+
+The pre-commit hook ensures all committed code meets our formatting standards, preventing CI failures and maintaining consistent code style across the team.
+
+### Development Scripts
+
+```bash
+# Format all code
+npm run format
+
+# Check formatting without making changes
+npm run format:check
+
+# Run tests (core and web)
+npm run test
+
+# Run backend development server
+npm run dev --filter core
+
+# Run frontend development server
+npm run dev --filter web
+```
+
 We welcome issues or PRs that clarify documentation, add tests, or improve the developer workflow.
 
 ---
