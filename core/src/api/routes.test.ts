@@ -3,6 +3,15 @@ import { FastifyInstance } from 'fastify';
 import { apiRoutes } from './routes';
 import { btcpayClient } from '../services/btcpay';
 
+// Mock the database
+vi.mock('../models/database', () => ({
+  getDatabase: vi.fn(() => ({
+    prepare: vi.fn(() => ({
+      all: vi.fn(),
+    })),
+  })),
+}));
+
 // Mock the BTCPayServer client
 vi.mock('../services/btcpay', () => ({
   btcpayClient: {
@@ -183,6 +192,102 @@ describe('API Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body.webhooks).toEqual(mockWebhooks);
+    });
+  });
+
+  describe('GET /settled-invoices', () => {
+    it('should return list of settled invoices', async () => {
+      const mockSettledInvoices = [
+        {
+          id: 'webhook_123',
+          invoice_id: 'invoice_456',
+          store_id: 'store_789',
+          payload: JSON.stringify({
+            metadata: {
+              amount: '100.00',
+              currency: 'USD',
+              buyerEmail: 'customer@example.com'
+            }
+          }),
+          created_at: '2024-01-15T10:30:00.000Z',
+          quickbooks_status: 'pending',
+          quickbooks_transaction_id: null,
+        },
+      ];
+
+      // Mock the database query
+      const mockDb = {
+        prepare: vi.fn(() => ({
+          all: vi.fn(() => mockSettledInvoices),
+        })),
+      };
+      const { getDatabase } = await import('../models/database');
+      vi.mocked(getDatabase).mockReturnValue(mockDb as any);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/settled-invoices',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.invoices).toBeDefined();
+      expect(body.invoices.length).toBe(1);
+      expect(body.invoices[0].invoiceId).toBe('invoice_456');
+      expect(body.invoices[0].quickbooksData).toBeDefined();
+    });
+
+    it('should handle database query errors', async () => {
+      // Mock the database to throw an error
+      const { getDatabase } = await import('../models/database');
+      vi.mocked(getDatabase).mockImplementation(() => {
+        throw new Error('Database connection failed');
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/settled-invoices',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.invoices).toEqual([]);
+      expect(body.error).toBe('Database connection failed');
+    });
+
+    it('should handle malformed JSON in webhook payload', async () => {
+      const mockSettledInvoices = [
+        {
+          id: 'webhook_123',
+          invoice_id: 'invoice_456',
+          store_id: 'store_789',
+          payload: 'invalid json',
+          created_at: '2024-01-15T10:30:00.000Z',
+          quickbooks_status: 'pending',
+          quickbooks_transaction_id: null,
+        },
+      ];
+
+      // Mock the database query
+      const mockDb = {
+        prepare: vi.fn(() => ({
+          all: vi.fn(() => mockSettledInvoices),
+        })),
+      };
+      const { getDatabase } = await import('../models/database');
+      vi.mocked(getDatabase).mockReturnValue(mockDb as any);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/settled-invoices',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.invoices).toBeDefined();
+      expect(body.invoices.length).toBe(1);
+      expect(body.invoices[0].amount).toBe('Parse Error');
+      expect(body.invoices[0].quickbooksData).toBeNull();
     });
   });
 

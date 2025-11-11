@@ -155,20 +155,6 @@ describe('App', () => {
       });
     });
 
-    it('should handle register webhook button click', async () => {
-      render(<App />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Connected to BTCPayServer')).toBeInTheDocument();
-      });
-
-      const registerButton = screen.getByText('Register Webhook');
-      fireEvent.click(registerButton);
-
-      await waitFor(() => {
-        expect(mockedAxios.post).toHaveBeenCalledWith('/api/btcpay/webhook/register');
-      });
-    });
   });
 
   describe('API Key Modal', () => {

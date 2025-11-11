@@ -23,11 +23,52 @@ interface ApiKeyStatus {
   key: string | null;
 }
 
+interface WebhookData {
+  id: string;
+  url: string;
+  events: string[];
+  active: boolean;
+}
+
+interface WebhookResponse {
+  webhooks: WebhookData[];
+}
+
+interface SettledInvoice {
+  id: string;
+  invoiceId: string;
+  storeId: string;
+  settledAt: string;
+  quickbooksStatus: 'pending' | 'sent_to_quickbooks';
+  quickbooksTransactionId: string | null;
+  amount: string | number;
+  currency: string;
+  customerInfo: string;
+  quickbooksData: {
+    amount: number;
+    currency: string;
+    date: string;
+    description: string;
+    customer: string;
+  } | null;
+}
+
+interface SettledInvoicesResponse {
+  invoices: SettledInvoice[];
+  error?: string;
+}
+
 function App() {
   const [btcpayStatus, setBtcpayStatus] = useState<BTCPayStatus | null>(null);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeyStatus | null>(null);
+  const [webhooks, setWebhooks] = useState<WebhookData[]>([]);
+  const [webhookError, setWebhookError] = useState<string | null>(null);
+  const [webhookLoading, setWebhookLoading] = useState(false);
+  const [settledInvoices, setSettledInvoices] = useState<SettledInvoice[]>([]);
+  const [settledInvoicesError, setSettledInvoicesError] = useState<string | null>(null);
+  const [settledInvoicesLoading, setSettledInvoicesLoading] = useState(false);
   const [showApiKeyForm, setShowApiKeyForm] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState('');
@@ -45,6 +86,8 @@ function App() {
     if (keyStatus?.configured) {
       await checkBtcpayStatus();
       await checkConfigStatus();
+      await fetchWebhooks();
+      await fetchSettledInvoices();
     } else {
       // Set default states when no API key is configured
       setBtcpayStatus({ connected: false, authenticated: false });
@@ -53,6 +96,10 @@ function App() {
         quickbooksConfigured: false,
         setupComplete: false,
       });
+      setWebhooks([]);
+      setWebhookError(null);
+      setSettledInvoices([]);
+      setSettledInvoicesError(null);
     }
 
     setLoading(false);
@@ -95,6 +142,56 @@ function App() {
     }
   };
 
+  const fetchWebhooks = async () => {
+    setWebhookLoading(true);
+    setWebhookError(null);
+    try {
+      const response = await axios.get<WebhookResponse>('/api/btcpay/webhooks');
+      setWebhooks(response.data.webhooks);
+    } catch (error) {
+      console.error('Failed to fetch webhooks:', error);
+      let errorMessage = 'Failed to fetch webhooks';
+
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 403) {
+          errorMessage = 'API key does not have permission to view webhooks. Please check your API key permissions.';
+        } else if (error.response?.status === 401) {
+          errorMessage = 'API key is invalid or expired.';
+        } else if (error.response?.data?.error) {
+          errorMessage = error.response.data.error;
+        }
+      }
+
+      setWebhookError(errorMessage);
+      setWebhooks([]);
+    } finally {
+      setWebhookLoading(false);
+    }
+  };
+
+  const fetchSettledInvoices = async () => {
+    setSettledInvoicesLoading(true);
+    setSettledInvoicesError(null);
+    try {
+      const response = await axios.get<SettledInvoicesResponse>('/api/settled-invoices');
+      setSettledInvoices(response.data.invoices);
+    } catch (error) {
+      console.error('Failed to fetch settled invoices:', error);
+      let errorMessage = 'Failed to fetch settled invoices';
+
+      if (axios.isAxiosError(error)) {
+        if (error.response?.data?.error) {
+          errorMessage = error.response.data.error;
+        }
+      }
+
+      setSettledInvoicesError(errorMessage);
+      setSettledInvoices([]);
+    } finally {
+      setSettledInvoicesLoading(false);
+    }
+  };
+
   const saveApiKey = async () => {
     if (!apiKeyInput.trim()) {
       alert('Please enter a valid API key');
@@ -107,24 +204,13 @@ function App() {
       setShowApiKeyForm(false);
       setShowSuccessModal(true);
       // Refresh all statuses
-      await Promise.all([initializeApp(), checkApiKeyStatus()]);
+      await initializeApp();
     } catch (error) {
       console.error('Failed to save API key:', error);
       alert('Failed to save API key. Check console for details.');
     }
   };
 
-  const registerWebhook = async () => {
-    try {
-      await axios.post('/api/btcpay/webhook/register');
-      alert('Webhook registration attempted. Check logs for details.');
-      // Refresh status after a short delay
-      setTimeout(initializeApp, 2000);
-    } catch (error) {
-      console.error('Failed to register webhook:', error);
-      alert('Failed to register webhook. Check console for details.');
-    }
-  };
 
   return (
     <div className="App">
@@ -242,6 +328,103 @@ function App() {
                     <p>Loading...</p>
                   )}
                 </div>
+
+                <div className="status-card">
+                  <h3>
+                    Webhooks
+                    <button
+                      onClick={fetchWebhooks}
+                      disabled={webhookLoading}
+                      className="refresh-webhooks-btn"
+                      title="Refresh webhooks"
+                      aria-label="Refresh webhook list"
+                    >
+                      🔄
+                    </button>
+                  </h3>
+                  {webhookLoading ? (
+                    <p>Loading webhooks...</p>
+                  ) : webhookError ? (
+                    <div className="webhook-error">
+                      <p className="status-error">❌ {webhookError}</p>
+                    </div>
+                  ) : webhooks.length === 0 ? (
+                    <p>No webhooks configured yet.</p>
+                  ) : (
+                    <div className="webhook-list">
+                      {webhooks.map((webhook) => (
+                        <div key={webhook.id} className="webhook-item">
+                          <div className="webhook-header">
+                            <span className={`webhook-status ${webhook.active ? 'active' : 'inactive'}`}>
+                              {webhook.active ? '🟢' : '🔴'}
+                            </span>
+                            <strong>{webhook.url}</strong>
+                          </div>
+                          <div className="webhook-events">
+                            Events: {webhook.events.join(', ')}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="status-card">
+                  <h3>
+                    Settled Invoices
+                    <button
+                      onClick={fetchSettledInvoices}
+                      disabled={settledInvoicesLoading}
+                      className="refresh-webhooks-btn"
+                      title="Refresh settled invoices"
+                      aria-label="Refresh settled invoices list"
+                    >
+                      🔄
+                    </button>
+                  </h3>
+                  {settledInvoicesLoading ? (
+                    <p>Loading settled invoices...</p>
+                  ) : settledInvoicesError ? (
+                    <div className="webhook-error">
+                      <p className="status-error">❌ {settledInvoicesError}</p>
+                    </div>
+                  ) : settledInvoices.length === 0 ? (
+                    <p>No settled invoices yet.</p>
+                  ) : (
+                    <div className="settled-invoices-list">
+                      {settledInvoices.map((invoice) => (
+                        <div key={invoice.id} className="invoice-item">
+                          <div className="invoice-header">
+                            <span className={`invoice-status ${invoice.quickbooksStatus === 'sent_to_quickbooks' ? 'sent' : 'pending'}`}>
+                              {invoice.quickbooksStatus === 'sent_to_quickbooks' ? '✅' : '⏳'}
+                            </span>
+                            <strong>{invoice.invoiceId}</strong>
+                            <span className="invoice-amount">
+                              {typeof invoice.amount === 'number' ? `$${invoice.amount.toFixed(2)}` : invoice.amount} {invoice.currency}
+                            </span>
+                          </div>
+                          <div className="invoice-details">
+                            <div className="invoice-info">
+                              <span>Customer: {invoice.customerInfo}</span>
+                              <span>Settled: {new Date(invoice.settledAt).toLocaleString()}</span>
+                            </div>
+                            {invoice.quickbooksData && (
+                              <div className="quickbooks-preview">
+                                <h5>📊 QuickBooks Data:</h5>
+                                <div className="qb-data">
+                                  <span>Amount: ${invoice.quickbooksData.amount.toFixed(2)}</span>
+                                  <span>Date: {invoice.quickbooksData.date}</span>
+                                  <span>Description: {invoice.quickbooksData.description}</span>
+                                  <span>Customer: {invoice.quickbooksData.customer}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Status Help Section */}
@@ -320,12 +503,6 @@ function App() {
                   aria-label="Refresh status of all connections and services"
                 >
                   Refresh Status
-                </button>
-                <button
-                  onClick={registerWebhook}
-                  aria-label="Register webhook to receive BTCPayServer notifications"
-                >
-                  Register Webhook
                 </button>
               </div>
             </div>
