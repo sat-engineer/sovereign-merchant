@@ -344,7 +344,11 @@ export class BTCPayServer {
         return null;
       }
 
-      const storeId = (stores[0] as any).id;
+      const storeId = (stores[0] as { id: string })?.id;
+      if (!storeId) {
+        console.error('Store does not have a valid ID field');
+        return null;
+      }
       console.log(`📍 Registering webhook for store: ${storeId}`);
 
       const webhookData = {
@@ -402,11 +406,21 @@ export class BTCPayServer {
         return [];
       }
 
-      const storeId = (stores[0] as any).id;
+      const storeId = (stores[0] as { id: string })?.id;
+      if (!storeId) {
+        console.error('Store does not have a valid ID field');
+        return [];
+      }
       const response = await this.client!.get(`/api/v1/stores/${storeId}/webhooks`);
 
       // Transform the response to match our WebhookData interface
-      return response.data.map((webhook: any) => ({
+      return response.data.map((webhook: {
+        id: string;
+        url: string;
+        enabled: boolean;
+        authorizedEvents?: { specificEvents?: string[] };
+        secret?: string;
+      }) => ({
         id: webhook.id,
         url: webhook.url,
         events: webhook.authorizedEvents?.specificEvents || [],

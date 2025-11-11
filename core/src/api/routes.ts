@@ -247,8 +247,19 @@ export const apiRoutes: FastifyPluginAsync = async (fastify) => {
         )
         .all();
 
+      // Database row interface
+      interface SettledInvoiceRow {
+        id: number;
+        invoice_id: string;
+        store_id: string;
+        payload: string;
+        settled_at: string;
+        quickbooks_status: 'sent_to_quickbooks' | 'pending';
+        quickbooks_transaction_id: string | null;
+      }
+
       // Parse the payload to extract relevant invoice info
-      const formattedInvoices = settledInvoices.map((invoice: any) => {
+      const formattedInvoices = (settledInvoices as SettledInvoiceRow[]).map((invoice) => {
         try {
           const payload = JSON.parse(invoice.payload);
 
