@@ -215,8 +215,8 @@ describe('API Routes', () => {
             metadata: {
               amount: '100.00',
               currency: 'USD',
-              buyerEmail: 'customer@example.com'
-            }
+              buyerEmail: 'customer@example.com',
+            },
           }),
           created_at: '2024-01-15T10:30:00.000Z',
           quickbooks_status: 'pending',

@@ -282,8 +282,8 @@ export const apiRoutes: FastifyPluginAsync = async (fastify) => {
               currency: payload?.metadata?.currency || 'USD',
               date: new Date(invoice.settled_at).toISOString().split('T')[0],
               description: `BTCPayServer Invoice ${invoice.invoice_id}`,
-              customer: payload?.metadata?.buyerEmail || 'Unknown Customer'
-            }
+              customer: payload?.metadata?.buyerEmail || 'Unknown Customer',
+            },
           };
         } catch (error) {
           console.warn(`Failed to parse webhook payload for invoice ${invoice.invoice_id}:`, error);
@@ -297,7 +297,7 @@ export const apiRoutes: FastifyPluginAsync = async (fastify) => {
             amount: 'Parse Error',
             currency: 'Unknown',
             customerInfo: 'Parse Error',
-            quickbooksData: null
+            quickbooksData: null,
           };
         }
       });

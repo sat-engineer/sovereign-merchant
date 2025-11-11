@@ -14,12 +14,14 @@ This project balances TypeScript's compile-time type checking with JavaScript's 
 ## Handling External API Data
 
 ### ❌ Avoid: Reckless Type Casting
+
 ```typescript
 // DON'T DO THIS - Runtime error if 'id' doesn't exist
 const storeId = (stores[0] as { id: string }).id;
 ```
 
 ### ✅ Preferred: Safe Optional Chaining with Validation
+
 ```typescript
 // DO THIS - Safe access with explicit error handling
 const storeId = (stores[0] as any)?.id;
@@ -30,11 +32,10 @@ if (!storeId) {
 ```
 
 ### ✅ Alternative: Type Guards (For Complex Validation)
+
 ```typescript
 function isValidStore(obj: unknown): obj is { id: string; name?: string } {
-  return typeof obj === 'object' &&
-         obj !== null &&
-         typeof (obj as any).id === 'string';
+  return typeof obj === 'object' && obj !== null && typeof (obj as any).id === 'string';
 }
 
 if (!isValidStore(stores[0])) {
@@ -45,12 +46,13 @@ const storeId = stores[0].id; // Now type-safe
 ```
 
 ### ✅ Advanced: Schema Validation (For Critical Data)
+
 ```typescript
 import { z } from 'zod';
 
 const StoreSchema = z.object({
   id: z.string().min(1),
-  name: z.string().optional()
+  name: z.string().optional(),
 });
 
 try {
@@ -67,6 +69,7 @@ try {
 ### Return Types for Operations That Might Fail
 
 **For single objects:**
+
 ```typescript
 async getStore(): Promise<Store | null> {
   // Return null on failure, not throw
@@ -74,6 +77,7 @@ async getStore(): Promise<Store | null> {
 ```
 
 **For collections:**
+
 ```typescript
 async getStores(): Promise<Store[]> {
   // Return empty array on failure, not throw
@@ -81,6 +85,7 @@ async getStores(): Promise<Store[]> {
 ```
 
 **For boolean results:**
+
 ```typescript
 async isValid(): Promise<boolean> {
   // Return false on failure, not throw
@@ -118,11 +123,13 @@ async exampleMethod(): Promise<Result | null> {
 ### Design Philosophy Trade-offs
 
 **Compile-time Safety Focus**: "Prevent runtime crashes through strict type guarantees"
+
 - Exhaustive type checking
 - Strict null safety
 - Comprehensive validation at build time
 
 **Runtime Resilience Focus**: "Handle real-world uncertainty gracefully"
+
 - APIs change without notice
 - Third-party libraries evolve independently
 - Users expect resilience over perfection
@@ -131,12 +138,14 @@ async exampleMethod(): Promise<Result | null> {
 ### Trade-offs
 
 **Benefits:**
+
 - Resilient to API changes
 - Clear error logging for debugging
 - Consistent user experience
 - Easy to maintain and extend
 
 **Costs:**
+
 - Less compile-time safety than Kotlin
 - Requires more runtime testing
 - Some "obviously wrong" code compiles
@@ -144,12 +153,14 @@ async exampleMethod(): Promise<Result | null> {
 ## When to Be More Strict
 
 Use full type safety for:
+
 - User input validation
 - Internal data structures you control
 - Critical business logic
 - Data persistence/serialization
 
 Use runtime safety for:
+
 - External API responses
 - Third-party library outputs
 - Network responses
