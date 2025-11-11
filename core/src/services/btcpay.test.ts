@@ -14,8 +14,8 @@ const createMockClient = () => ({
 
 // Mock axios client interface
 interface MockAxiosClient {
-  get?: ReturnType<typeof vi.fn>;
-  post?: ReturnType<typeof vi.fn>;
+  get: ReturnType<typeof vi.fn>;
+  post: ReturnType<typeof vi.fn>;
 }
 
 // Mock the database module
@@ -110,7 +110,7 @@ describe('BTCPayServer', () => {
       mockClient.get!.mockResolvedValueOnce({ data: [{ id: 'store_123' }] }); // Stores fetch
       mockClient.post!.mockResolvedValueOnce({ data: { id: 'webhook_123' } }); // Webhook registration
 
-      mockedAxios.create.mockReturnValue(mockClient as any);
+      mockedAxios.create.mockReturnValue(mockClient);
 
       const result = await btcpayClient.registerWebhook(
         'http://localhost:4001/api/webhooks/btcpay'
@@ -131,7 +131,7 @@ describe('BTCPayServer', () => {
       mockClient.get!.mockResolvedValueOnce({ data: [{ id: 'store_123' }] }); // Stores fetch
       mockClient.post!.mockRejectedValueOnce(new Error('Registration failed')); // Webhook registration fails
 
-      mockedAxios.create.mockReturnValue(mockClient as any);
+      mockedAxios.create.mockReturnValue(mockClient);
 
       const result = await btcpayClient.registerWebhook(
         'http://localhost:4001/api/webhooks/btcpay'
@@ -166,7 +166,7 @@ describe('BTCPayServer', () => {
       // Mock webhooks fetch
       mockClient.get!.mockResolvedValueOnce({ data: mockBTCPayWebhooks });
 
-      mockedAxios.create.mockReturnValue(mockClient as any);
+      mockedAxios.create.mockReturnValue(mockClient);
 
       const result = await btcpayClient.getWebhooks();
 
@@ -194,7 +194,7 @@ describe('BTCPayServer', () => {
       // Mock webhooks fetch to fail
       mockClient.get!.mockRejectedValueOnce(new Error('Fetch failed'));
 
-      mockedAxios.create.mockReturnValue(mockClient as any);
+      mockedAxios.create.mockReturnValue(mockClient);
 
       const result = await btcpayClient.getWebhooks();
       expect(result).toEqual([]);
@@ -215,7 +215,7 @@ describe('BTCPayServer', () => {
       mockClient.get!.mockResolvedValueOnce({ status: 200 }); // Connection check
       mockClient.get!.mockResolvedValueOnce({ data: mockStores }); // Stores fetch
 
-      mockedAxios.create.mockReturnValue(mockClient as any);
+      mockedAxios.create.mockReturnValue(mockClient);
 
       const result = await btcpayClient.getStores();
       expect(result).toEqual(mockStores);
@@ -226,7 +226,7 @@ describe('BTCPayServer', () => {
       mockClient.get!.mockResolvedValueOnce({ status: 200 }); // Connection check
       mockClient.get!.mockRejectedValueOnce(new Error('Stores fetch failed')); // Stores fetch fails
 
-      mockedAxios.create.mockReturnValue(mockClient as any);
+      mockedAxios.create.mockReturnValue(mockClient);
 
       await expect(btcpayClient.getStores()).rejects.toThrow('Stores fetch failed');
     });
@@ -235,7 +235,7 @@ describe('BTCPayServer', () => {
       const mockClient = createMockClient();
       mockClient.get!.mockRejectedValueOnce(new Error('Connection failed')); // Connection fails
 
-      mockedAxios.create.mockReturnValue(mockClient as any);
+      mockedAxios.create.mockReturnValue(mockClient);
 
       await expect(btcpayClient.getStores()).rejects.toThrow('BTCPayServer not connected');
     });

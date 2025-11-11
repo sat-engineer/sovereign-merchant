@@ -3,13 +3,22 @@ import { FastifyInstance } from 'fastify';
 import { apiRoutes } from './routes';
 import { btcpayClient } from '../services/btcpay';
 
+// Mock database interface
+interface MockStatement {
+  all: ReturnType<typeof vi.fn>;
+}
+
+interface MockDatabase {
+  prepare: (sql: string) => MockStatement;
+}
+
 // Mock the database
 vi.mock('../models/database', () => ({
   getDatabase: vi.fn(() => ({
     prepare: vi.fn(() => ({
       all: vi.fn(),
     })),
-  })),
+  })) as () => MockDatabase,
 }));
 
 // Mock the BTCPayServer client
@@ -216,13 +225,13 @@ describe('API Routes', () => {
       ];
 
       // Mock the database query
-      const mockDb = {
+      const mockDb: MockDatabase = {
         prepare: vi.fn(() => ({
           all: vi.fn(() => mockSettledInvoices),
         })),
       };
       const { getDatabase } = await import('../models/database');
-      vi.mocked(getDatabase).mockReturnValue(mockDb as any);
+      vi.mocked(getDatabase).mockReturnValue(mockDb);
 
       const response = await app.inject({
         method: 'GET',
@@ -269,13 +278,13 @@ describe('API Routes', () => {
       ];
 
       // Mock the database query
-      const mockDb = {
+      const mockDb: MockDatabase = {
         prepare: vi.fn(() => ({
           all: vi.fn(() => mockSettledInvoices),
         })),
       };
       const { getDatabase } = await import('../models/database');
-      vi.mocked(getDatabase).mockReturnValue(mockDb as any);
+      vi.mocked(getDatabase).mockReturnValue(mockDb);
 
       const response = await app.inject({
         method: 'GET',
