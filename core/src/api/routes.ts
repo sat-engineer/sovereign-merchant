@@ -222,4 +222,85 @@ export const apiRoutes: FastifyPluginAsync = async (fastify) => {
   await fastify.register(statusRoutes);
   await fastify.register(btcpayRoutes, { prefix: '/btcpay' });
   await fastify.register(webhookRoutes, { prefix: '/webhooks' });
+
+  // Get settled invoices (InvoiceSettled events)
+  fastify.get('/settled-invoices', async () => {
+    try {
+      const db = getDatabase();
+      const settledInvoices = db
+        .prepare(
+          `
+        SELECT
+          we.id,
+          we.invoice_id,
+          we.store_id,
+          we.payload,
+          we.created_at as settled_at,
+          CASE WHEN r.id IS NOT NULL THEN 'sent_to_quickbooks' ELSE 'pending' END as quickbooks_status,
+          r.quickbooks_transaction_id
+        FROM webhook_events we
+        LEFT JOIN reconciliations r ON we.invoice_id = r.btcpay_invoice_id
+        WHERE we.event_type = 'InvoiceSettled'
+        ORDER BY we.created_at DESC
+        LIMIT 100
+      `
+        )
+        .all();
+
+      // Parse the payload to extract relevant invoice info
+      const formattedInvoices = settledInvoices.map((invoice: any) => {
+        try {
+          const payload = JSON.parse(invoice.payload);
+
+          // Extract relevant info from the webhook payload
+          // Note: The exact structure depends on BTCPayServer's webhook format
+          return {
+            id: invoice.id,
+            invoiceId: invoice.invoice_id,
+            storeId: invoice.store_id,
+            settledAt: invoice.settled_at,
+            quickbooksStatus: invoice.quickbooks_status,
+            quickbooksTransactionId: invoice.quickbooks_transaction_id,
+            // Extract what we can from the payload - may need to adjust based on actual BTCPay webhook format
+            amount: payload?.metadata?.amount || 'Unknown',
+            currency: payload?.metadata?.currency || 'Unknown',
+            customerInfo: payload?.metadata?.buyerEmail || 'Unknown',
+            // This would be what we send to QuickBooks
+            quickbooksData: {
+              amount: payload?.metadata?.amount || 0,
+              currency: payload?.metadata?.currency || 'USD',
+              date: new Date(invoice.settled_at).toISOString().split('T')[0],
+              description: `BTCPayServer Invoice ${invoice.invoice_id}`,
+              customer: payload?.metadata?.buyerEmail || 'Unknown Customer'
+            }
+          };
+        } catch (error) {
+          console.warn(`Failed to parse webhook payload for invoice ${invoice.invoice_id}:`, error);
+          return {
+            id: invoice.id,
+            invoiceId: invoice.invoice_id,
+            storeId: invoice.store_id,
+            settledAt: invoice.settled_at,
+            quickbooksStatus: invoice.quickbooks_status,
+            quickbooksTransactionId: invoice.quickbooks_transaction_id,
+            amount: 'Parse Error',
+            currency: 'Unknown',
+            customerInfo: 'Parse Error',
+            quickbooksData: null
+          };
+        }
+      });
+
+      return {
+        invoices: formattedInvoices,
+      };
+    } catch (error) {
+      console.error('Failed to fetch settled invoices:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        invoices: [],
+        error: errorMessage,
+      };
+    }
+  });
 };

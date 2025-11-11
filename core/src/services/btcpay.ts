@@ -158,7 +158,7 @@ export class BTCPayServer {
         INSERT OR REPLACE INTO config (key, value, encrypted, updated_at)
         VALUES (?, ?, ?, datetime('now'))
       `
-      ).run('btcpay_api_key', apiKey, true);
+      ).run('btcpay_api_key', apiKey, 1); // Use 1 for true in SQLite
       console.log('✅ BTCPayServer API key saved to database');
     } catch (error) {
       console.error('Failed to save BTCPayServer API key to database:', error);
@@ -307,11 +307,29 @@ export class BTCPayServer {
   }
 
   /**
+   * Get list of stores
+   */
+  async getStores(): Promise<unknown[]> {
+    if (!(await this.ensureConnection())) {
+      throw new Error('BTCPayServer not connected');
+    }
+
+    try {
+      const response = await this.client!.get('/api/v1/stores');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to get BTCPayServer stores:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Register a webhook for payment notifications
+   * Default events: InvoiceSettled (payment fully confirmed), InvoiceReceivedPayment (payment received), InvoiceProcessing (payment confirmed, waiting for blockchain confirmations)
    */
   async registerWebhook(
     webhookUrl: string,
-    events: string[] = ['invoice_created', 'invoice_paid', 'invoice_expired']
+    events: string[] = ['InvoiceSettled', 'InvoiceReceivedPayment', 'InvoiceProcessing']
   ): Promise<WebhookData | null> {
     if (!(await this.ensureConnection())) {
       console.error('Cannot register webhook: BTCPayServer not connected');
@@ -319,23 +337,35 @@ export class BTCPayServer {
     }
 
     try {
+      // Get the first available store
+      const stores = await this.getStores();
+      if (!stores || stores.length === 0) {
+        console.error('No stores found in BTCPayServer');
+        return null;
+      }
+
+      const storeId = (stores[0] as any).id;
+      console.log(`📍 Registering webhook for store: ${storeId}`);
+
       const webhookData = {
+        enabled: true,
+        automaticRedelivery: true,
         url: webhookUrl,
-        events: events,
-        active: true,
+        authorizedEvents: {
+          everything: false,
+          specificEvents: events
+        },
         secret: this.generateWebhookSecret(),
       };
 
-      // Note: BTCPayServer webhooks are typically registered per store
-      // This is a simplified version - in production you'd need store-specific registration
-      const response = await this.client!.post('/api/v1/webhooks', webhookData);
+      const response = await this.client!.post(`/api/v1/stores/${storeId}/webhooks`, webhookData);
 
       return {
         id: response.data.id,
         url: webhookData.url,
+        events: events,
+        active: webhookData.enabled,
         secret: webhookData.secret,
-        events: webhookData.events,
-        active: true,
       };
     } catch (error) {
       console.error('Failed to register webhook:', error);
@@ -365,8 +395,24 @@ export class BTCPayServer {
     }
 
     try {
-      const response = await this.client!.get('/api/v1/webhooks');
-      return response.data;
+      // Get the first available store
+      const stores = await this.getStores();
+      if (!stores || stores.length === 0) {
+        console.error('No stores found in BTCPayServer');
+        return [];
+      }
+
+      const storeId = (stores[0] as any).id;
+      const response = await this.client!.get(`/api/v1/stores/${storeId}/webhooks`);
+
+      // Transform the response to match our WebhookData interface
+      return response.data.map((webhook: any) => ({
+        id: webhook.id,
+        url: webhook.url,
+        events: webhook.authorizedEvents?.specificEvents || [],
+        active: webhook.enabled,
+        secret: webhook.secret,
+      }));
     } catch (error) {
       console.error('Failed to get webhooks:', error);
       return [];
