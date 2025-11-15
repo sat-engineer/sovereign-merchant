@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
-import { btcpayClient } from '../services/btcpay';
+import crypto from 'crypto';
+import { btcpayClient, WebhookStatus } from '../services/btcpay';
 import { getDatabase } from '../models/database';
 
 interface BTCPayWebhookPayload {
@@ -133,21 +134,250 @@ const btcpayRoutes: FastifyPluginAsync = async (fastify) => {
       webhooks: webhooks,
     };
   });
+
+  // Automatic webhook establishment
+  fastify.post('/webhooks/establish', async (request, reply) => {
+    try {
+      console.log('🔄 Starting automatic webhook establishment via API');
+
+      const status: WebhookStatus = await btcpayClient.ensureWebhooksEstablished();
+
+      if (status.setupComplete) {
+        console.log('✅ Webhook establishment completed successfully');
+        return reply.code(200).send({
+          success: true,
+          message: 'Webhooks established successfully',
+          status: status,
+        });
+      } else if (status.errors.length > 0) {
+        console.error('❌ Webhook establishment failed with errors:', status.errors);
+        return reply.code(500).send({
+          success: false,
+          message: 'Failed to establish webhooks',
+          status: status,
+          userMessage: status.errors.join('; '),
+        });
+      } else {
+        // Setup not complete but no errors - this shouldn't happen but handle gracefully
+        console.warn('⚠️  Webhook setup incomplete but no errors reported');
+        return reply.code(200).send({
+          success: false,
+          message: 'Webhook setup incomplete',
+          status: status,
+          userMessage: `Missing ${status.missingEvents.length} webhook events. Please try again or check BTCPayServer configuration.`,
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('❌ Unexpected error during webhook establishment:', errorMessage);
+      return reply.code(500).send({
+        success: false,
+        message: 'Unexpected error during webhook establishment',
+        userMessage: 'An unexpected error occurred. Please check the server logs for details.',
+      });
+    }
+  });
+
+  // Get webhook status
+  fastify.post('/webhooks/sync-secrets', async (request, reply) => {
+    try {
+      console.log('🔄 Syncing webhook secrets...');
+      await btcpayClient.syncExistingWebhookSecrets();
+      console.log('✅ Webhook secrets synced successfully');
+
+      return reply.code(200).send({
+        success: true,
+        message: 'Webhook secrets synced successfully',
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('❌ Failed to sync webhook secrets:', errorMessage);
+      return reply.code(500).send({
+        success: false,
+        message: 'Failed to sync webhook secrets',
+        userMessage: 'Unable to sync webhook secrets. Please try again.',
+      });
+    }
+  });
+
+  fastify.get('/webhooks/status', async (request, reply) => {
+    try {
+      const { webhookUrl } = request.query as { webhookUrl?: string };
+      const targetUrl = webhookUrl || btcpayClient.buildWebhookUrl();
+
+      if (!targetUrl) {
+        return reply.code(500).send({
+          success: false,
+          message: 'No webhook URL available',
+          userMessage: 'Cannot check webhook status - no webhook URL configured.',
+        });
+      }
+
+      console.log(`📊 Checking webhook status for URL: ${targetUrl}`);
+
+      const status: WebhookStatus = await btcpayClient.getWebhookStatus(targetUrl);
+
+      return reply.code(200).send({
+        success: true,
+        status: status,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('❌ Failed to get webhook status:', errorMessage);
+      return reply.code(500).send({
+        success: false,
+        message: 'Failed to get webhook status',
+        userMessage: 'Unable to check webhook status. Please try again.',
+      });
+    }
+  });
+
+  // Manual webhook management
+  fastify.delete('/webhooks/:webhookId', async (request, reply) => {
+    const { webhookId } = request.params as { webhookId: string };
+
+    try {
+      console.log(`🗑️  Deleting webhook via API: ${webhookId}`);
+
+      const success = await btcpayClient.deleteWebhook(webhookId);
+
+      if (success) {
+        return reply.code(200).send({
+          success: true,
+          message: 'Webhook deleted successfully',
+        });
+      } else {
+        return reply.code(500).send({
+          success: false,
+          message: 'Failed to delete webhook',
+          userMessage: 'Unable to delete the webhook. Please check BTCPayServer configuration.',
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`❌ Failed to delete webhook ${webhookId}:`, errorMessage);
+      return reply.code(500).send({
+        success: false,
+        message: 'Unexpected error deleting webhook',
+        userMessage: 'An unexpected error occurred while deleting the webhook.',
+      });
+    }
+  });
 };
 
 // Webhook processing routes
 const webhookRoutes: FastifyPluginAsync = async (fastify) => {
+  // Disable JSON parsing for webhook endpoint to access raw body
+  fastify.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    function (req, body, done) {
+      done(null, body);
+    }
+  );
+
   fastify.post('/btcpay', async (request, reply) => {
-    const payload = request.body as unknown;
+    console.log(`🔥 WEBHOOK RECEIVED: ${request.method} ${request.url}`);
+
+    // Log only safe headers (exclude sensitive ones)
+    const safeHeaders = { ...request.headers };
+    delete safeHeaders.authorization;
+    delete safeHeaders.cookie;
+    delete safeHeaders['x-api-key'];
+    delete safeHeaders['btcpay-sig']; // Signature is safe but we'll log it separately
+    console.log(`🔥 Safe headers:`, JSON.stringify(safeHeaders, null, 2));
+    if (request.headers['btcpay-sig']) {
+      const sig = Array.isArray(request.headers['btcpay-sig'])
+        ? request.headers['btcpay-sig'][0]
+        : request.headers['btcpay-sig'];
+      console.log(`🔥 BTCPay signature present: ${sig!.substring(0, 20)}...`);
+    }
+
+    const rawBody = request.body as string;
+    // Don't log raw body for security - only log parsed payload later
+
+    // Validate BTCPayServer webhook signature
+    const signature = request.headers['btcpay-sig'] as string;
+    if (!signature) {
+      console.error('❌ Missing BTCPay-Sig header');
+      return reply.code(400).send({
+        error: 'Missing BTCPay-Sig header',
+      });
+    }
+
+    // Get the webhook secret from our database
+    const db = getDatabase();
+    let webhookSecret: string | null = null;
+
+    try {
+      // Find the webhook secret from our stored configurations
+      const allConfigs = db
+        .prepare('SELECT id, secret, active FROM webhook_configs')
+        .all() as Array<{ id: string; secret: string; active: number }>;
+      console.log(
+        '🔍 Available webhook configs in database:',
+        allConfigs.map((c) => ({ id: c.id, hasSecret: !!c.secret, active: c.active }))
+      );
+
+      const configResult = db
+        .prepare('SELECT id, secret FROM webhook_configs WHERE active = 1 LIMIT 1')
+        .get() as { id: string; secret: string } | undefined;
+      if (configResult) {
+        webhookSecret = configResult.secret;
+        console.log(
+          `✅ Found active webhook config: ${configResult.id}, has secret: ${!!webhookSecret}`
+        );
+      } else {
+        console.log('❌ No active webhook configs found');
+      }
+    } catch (error) {
+      console.error('Failed to get webhook secret from database:', error);
+    }
+
+    if (!webhookSecret) {
+      console.error('❌ No webhook secret found in database');
+      return reply.code(500).send({
+        error: 'Webhook secret not configured',
+      });
+    }
+
+    // Validate the signature
+    const expectedSignature = `sha256=${crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex')}`;
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+      console.error('❌ Invalid webhook signature');
+      console.error('Expected:', expectedSignature.substring(0, 20) + '...');
+      console.error('Received:', signature.substring(0, 20) + '...');
+      return reply.code(401).send({
+        error: 'Invalid signature',
+      });
+    }
+
+    console.log('✅ Webhook signature validated');
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (error) {
+      console.error('❌ Failed to parse webhook payload as JSON:', error);
+      return reply.code(400).send({
+        error: 'Invalid JSON payload',
+      });
+    }
+
+    console.log(`🔥 Parsed payload:`, JSON.stringify(payload, null, 2));
 
     // Basic validation - check if it's a valid webhook payload
     if (!payload || typeof payload !== 'object') {
+      console.error('❌ Invalid webhook payload - not an object');
       return reply.code(400).send({
         error: 'Invalid webhook payload',
       });
     }
 
     const webhookPayload = payload as BTCPayWebhookPayload;
+    console.log(
+      `📨 Processing BTCPay webhook: ${webhookPayload.type} for invoice ${webhookPayload.invoiceId}`
+    );
 
     try {
       const db = getDatabase();
@@ -169,7 +399,9 @@ const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         JSON.stringify(payload)
       );
 
-      console.log(`✅ Stored BTCPay webhook event: ${webhookId} (${webhookPayload.type})`);
+      console.log(
+        `✅ Stored BTCPay webhook event: ${webhookId} (${webhookPayload.type}) for invoice ${webhookPayload.invoiceId}`
+      );
 
       reply.code(200).send({
         received: true,
@@ -187,9 +419,14 @@ const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
   });
+};
 
-  // Get recent webhook events
-  fastify.get('/btcpay', async () => {
+// Main API routes - register all route groups
+export const apiRoutes: FastifyPluginAsync = async (fastify) => {
+  await fastify.register(statusRoutes);
+
+  // Get recent webhook events (must be registered before btcpayRoutes to avoid path conflict)
+  fastify.get('/webhook-events', async () => {
     try {
       const db = getDatabase();
       const events = db
@@ -215,11 +452,7 @@ const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       };
     }
   });
-};
 
-// Main API routes - register all route groups
-export const apiRoutes: FastifyPluginAsync = async (fastify) => {
-  await fastify.register(statusRoutes);
   await fastify.register(btcpayRoutes, { prefix: '/btcpay' });
   await fastify.register(webhookRoutes, { prefix: '/webhooks' });
 

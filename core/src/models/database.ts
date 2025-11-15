@@ -22,7 +22,7 @@ export async function initializeDatabase(): Promise<void> {
       CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY,                    -- Unique configuration key
         value TEXT NOT NULL,                     -- Configuration value (may be encrypted)
-        encrypted BOOLEAN DEFAULT FALSE,         -- Whether value is encrypted at rest
+        encrypted INTEGER DEFAULT 0,             -- Whether value is encrypted at rest (0=false, 1=true)
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -53,6 +53,18 @@ export async function initializeDatabase(): Promise<void> {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- BTCPayServer webhook configurations
+      -- Stores webhook secrets and metadata for validation
+      CREATE TABLE IF NOT EXISTS webhook_configs (
+        id TEXT PRIMARY KEY,                     -- Unique webhook ID (from BTCPayServer)
+        url TEXT NOT NULL,                       -- Webhook URL
+        secret TEXT NOT NULL,                    -- Webhook secret for signature validation
+        events TEXT NOT NULL,                    -- JSON array of enabled events
+        active INTEGER DEFAULT 1,                -- Whether webhook is active (0=false, 1=true)
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
       -- BTCPayServer webhook events
       -- Stores incoming webhook notifications from BTCPayServer
       CREATE TABLE IF NOT EXISTS webhook_events (
@@ -61,7 +73,7 @@ export async function initializeDatabase(): Promise<void> {
         invoice_id TEXT,                         -- BTCPayServer invoice ID
         store_id TEXT,                           -- BTCPayServer store ID
         payload TEXT NOT NULL,                   -- Full webhook payload as JSON
-        processed BOOLEAN DEFAULT FALSE,         -- Whether this event has been processed
+        processed INTEGER DEFAULT 0,             -- Whether this event has been processed (0=false, 1=true)
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         processed_at DATETIME                    -- When the event was processed
       );

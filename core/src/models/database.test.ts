@@ -91,7 +91,7 @@ describe('Database', () => {
       expect(execCall[0]).toContain('invoice_id TEXT');
       expect(execCall[0]).toContain('store_id TEXT');
       expect(execCall[0]).toContain('payload TEXT NOT NULL');
-      expect(execCall[0]).toContain('processed BOOLEAN DEFAULT FALSE');
+      expect(execCall[0]).toContain('processed INTEGER DEFAULT 0');
       expect(execCall[0]).toContain('created_at DATETIME DEFAULT CURRENT_TIMESTAMP');
       expect(execCall[0]).toContain('processed_at DATETIME');
     });

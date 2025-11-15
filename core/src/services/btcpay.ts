@@ -37,7 +37,36 @@ export interface WebhookData {
   active: boolean;
 }
 
+export interface WebhookCreationData {
+  enabled: boolean;
+  automaticRedelivery: boolean;
+  url: string;
+  authorizedEvents: {
+    everything: boolean;
+    specificEvents: string[];
+  };
+  secret?: string;
+}
+
+export interface WebhookStatus {
+  webhooks: WebhookData[];
+  requiredEvents: string[];
+  missingEvents: string[];
+  setupComplete: boolean;
+  errors: string[];
+}
+
 export class BTCPayServer {
+  private static readonly REQUIRED_WEBHOOK_EVENTS = [
+    'InvoiceCreated',
+    'InvoiceReceivedPayment',
+    'InvoiceProcessing',
+    'InvoiceExpired',
+    'InvoiceSettled',
+    'InvoiceInvalid',
+    'InvoicePaymentSettled',
+  ] as const;
+
   private client: AxiosInstance | null;
   private baseUrl: string;
   private fallbackUrls: string[];
@@ -315,17 +344,54 @@ export class BTCPayServer {
     }
 
     try {
+      console.log('🔍 Fetching stores from BTCPayServer API...');
       const response = await this.client!.get('/api/v1/stores');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to get BTCPayServer stores:', error);
+      console.log('📋 API response received, status:', response.status);
+      console.log(
+        '📋 Response type:',
+        Array.isArray(response.data) ? 'array' : typeof response.data
+      );
+      console.log('📋 Response size:', JSON.stringify(response.data).length, 'characters');
+
+      // Ensure we return an array
+      let stores: unknown[] = [];
+      if (Array.isArray(response.data)) {
+        stores = response.data;
+        console.log(`📊 Successfully parsed ${stores.length} stores from API response`);
+      } else if (response.data && typeof response.data === 'object') {
+        // Sometimes APIs return { data: [...] } format
+        if (Array.isArray(response.data.data)) {
+          stores = response.data.data;
+          console.log(`📊 Found ${stores.length} stores in nested data array`);
+        } else {
+          console.warn('⚠️ API response is an object but not in expected array format');
+          stores = [];
+        }
+      } else {
+        console.error('❌ API response is not in expected format (not an array or object)');
+        stores = [];
+      }
+
+      console.log(`📊 Final result: ${stores.length} stores available`);
+      return stores;
+    } catch (error: any) {
+      console.error('❌ Failed to get BTCPayServer stores:', error.message || error);
+
+      // Log additional error details
+      if (error.response) {
+        console.error('❌ API Error Response Status:', error.response.status);
+        console.error('❌ API Error Response Data:', JSON.stringify(error.response.data, null, 2));
+      }
+
       throw error;
     }
   }
 
   /**
    * Register a webhook for payment notifications
-   * Default events: InvoiceSettled (payment fully confirmed), InvoiceReceivedPayment (payment received), InvoiceProcessing (payment confirmed, waiting for blockchain confirmations)
+   * Default events: InvoiceSettled (payment fully confirmed),
+   * InvoiceReceivedPayment (payment received), InvoiceProcessing (payment
+   * confirmed, waiting for blockchain confirmations)
    */
   async registerWebhook(
     webhookUrl: string,
@@ -363,6 +429,28 @@ export class BTCPayServer {
       };
 
       const response = await this.client!.post(`/api/v1/stores/${storeId}/webhooks`, webhookData);
+
+      // Store webhook configuration in database for signature validation
+      try {
+        const db = getDatabase();
+        const insertStmt = db.prepare(`
+          INSERT OR REPLACE INTO webhook_configs (id, url, secret, events, active, updated_at)
+          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `);
+
+        insertStmt.run(
+          response.data.id,
+          webhookData.url,
+          response.data.secret || webhookData.secret,
+          JSON.stringify(events),
+          webhookData.enabled ? 1 : 0
+        );
+
+        console.log(`💾 Stored webhook config for validation: ${response.data.id}`);
+      } catch (error) {
+        console.error('Failed to store webhook config:', error);
+        // Don't fail the webhook creation if we can't store the config
+      }
 
       return {
         id: response.data.id,
@@ -414,7 +502,7 @@ export class BTCPayServer {
       const response = await this.client!.get(`/api/v1/stores/${storeId}/webhooks`);
 
       // Transform the response to match our WebhookData interface
-      return response.data.map(
+      const webhooks = response.data.map(
         (webhook: {
           id: string;
           url: string;
@@ -429,9 +517,478 @@ export class BTCPayServer {
           secret: webhook.secret,
         })
       );
+
+      // Sync webhook secrets to our database for validation
+      await this.syncWebhookSecretsToDatabase(webhooks);
+
+      return webhooks;
     } catch (error) {
       console.error('Failed to get webhooks:', error);
       return [];
+    }
+  }
+
+  /**
+   * Sync existing webhook secrets from BTCPayServer to our local database
+   * This ensures we have secrets for validation even if webhooks were created before we added database storage
+   */
+  async syncExistingWebhookSecrets(): Promise<void> {
+    try {
+      console.log('🔄 Fetching existing webhooks from BTCPayServer for secret sync...');
+      const webhooks = await this.getWebhooks();
+      console.log(`📊 Found ${webhooks.length} existing webhooks to sync`);
+
+      await this.syncWebhookSecretsToDatabase(webhooks);
+      console.log('✅ Webhook secret sync completed');
+    } catch (error) {
+      console.error('❌ Failed to sync existing webhook secrets:', error);
+    }
+  }
+
+  /**
+   * Sync webhook secrets from BTCPayServer to our local database
+   */
+  private async syncWebhookSecretsToDatabase(webhooks: WebhookData[]): Promise<void> {
+    try {
+      const db = getDatabase();
+
+      console.log(`🔄 Syncing ${webhooks.length} webhooks to database:`);
+      for (const webhook of webhooks) {
+        console.log(
+          `  - Webhook ${webhook.id}: active=${webhook.active}, hasSecret=${!!webhook.secret}, url=${webhook.url}`
+        );
+
+        if (webhook.secret) {
+          // Store or update webhook config in database
+          const insertStmt = db.prepare(`
+            INSERT OR REPLACE INTO webhook_configs (id, url, secret, events, active, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `);
+
+          insertStmt.run(
+            webhook.id,
+            webhook.url,
+            webhook.secret,
+            JSON.stringify(webhook.events),
+            webhook.active ? 1 : 0
+          );
+
+          console.log(
+            `💾 Stored webhook config for: ${webhook.id} (secret length: ${webhook.secret.length})`
+          );
+        } else {
+          console.log(`⚠️  Skipping webhook ${webhook.id} - no secret`);
+        }
+      }
+
+      // Verify what was stored
+      const storedConfigs = db
+        .prepare('SELECT id, active, LENGTH(secret) as secret_length FROM webhook_configs')
+        .all();
+      console.log('📊 Stored webhook configs:', storedConfigs);
+    } catch (error) {
+      console.error('Failed to sync webhook secrets to database:', error);
+    }
+  }
+
+  /**
+   * Get the first available store ID with proper validation
+   */
+  private async getFirstStoreId(): Promise<string | null> {
+    try {
+      const stores = await this.getStores();
+      console.log('🔍 Analyzing store data:', JSON.stringify(stores, null, 2));
+
+      if (!stores || stores.length === 0) {
+        console.error('❌ No stores found in BTCPayServer');
+        console.error('💡 This usually means:');
+        console.error('   1. The API key lacks permission to view stores');
+        console.error(
+          '   2. The API key was created without "btcpay.store.canviewstoresettings" permission'
+        );
+        console.error('   3. No stores exist in BTCPayServer');
+        console.error('🔧 Solution: Check your BTCPayServer API key permissions');
+        return null;
+      }
+
+      console.log('📋 First store object:', JSON.stringify(stores[0], null, 2));
+
+      const storeId = (stores[0] as { id: string })?.id;
+      console.log('🔑 Extracted storeId:', storeId, 'Type:', typeof storeId);
+
+      if (!storeId || typeof storeId !== 'string' || storeId.trim().length === 0) {
+        console.error('❌ Store does not have a valid ID field');
+        console.error('💡 The store object structure may be different than expected');
+        return null;
+      }
+
+      console.log('✅ Valid store ID found:', storeId.trim());
+      return storeId.trim();
+    } catch (error) {
+      console.error('❌ Failed to get store ID:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Automatically establish webhooks for all required events
+   * This is the main entry point for webhook setup
+   */
+  async ensureWebhooksEstablished(webhookUrl?: string): Promise<WebhookStatus> {
+    console.log('🔄 Starting automatic webhook establishment...');
+
+    const validation = await this.validatePrerequisites();
+    if (!validation.valid) {
+      return this.createErrorStatus(validation.errors);
+    }
+
+    const urlResult = await this.getTargetWebhookUrl(webhookUrl);
+    if (!urlResult.url) {
+      return this.createErrorStatus(urlResult.errors);
+    }
+
+    console.log(`📍 Target webhook URL: ${urlResult.url}`);
+
+    // Always sync webhook secrets first to ensure they're available for validation
+    console.log('🔄 Syncing webhook secrets to database...');
+    await this.syncExistingWebhookSecrets();
+
+    console.log('🔍 Checking existing webhook configuration...');
+
+    // Get current webhook status
+    const currentStatus = await this.getWebhookStatus(urlResult.url);
+
+    // If setup is already complete, return current status
+    if (currentStatus.setupComplete) {
+      console.log('✅ Webhook setup is already complete');
+      return currentStatus;
+    }
+
+    // Create missing webhooks
+    if (currentStatus.missingEvents.length > 0) {
+      console.log(
+        `📝 Creating webhooks for missing events: ${currentStatus.missingEvents.join(', ')}`
+      );
+
+      const createResult = await this.createWebhookForEvents(
+        urlResult.url,
+        currentStatus.missingEvents
+      );
+      if (createResult.errors.length > 0) {
+        // Refresh status to get updated state after creation attempt
+        const updatedStatus = await this.getWebhookStatus(urlResult.url);
+        return {
+          ...updatedStatus,
+          errors: [...updatedStatus.errors, ...createResult.errors],
+        };
+      }
+
+      // Refresh status after successful creation
+      const updatedStatus = await this.getWebhookStatus(urlResult.url);
+      return updatedStatus;
+    }
+
+    return currentStatus;
+  }
+
+  /**
+   * Validate prerequisites for webhook establishment
+   */
+  private async validatePrerequisites(): Promise<{ valid: boolean; errors: string[] }> {
+    const errors: string[] = [];
+
+    if (!(await this.ensureConnection())) {
+      errors.push('BTCPayServer not connected - cannot establish webhooks');
+    }
+
+    return { valid: errors.length === 0, errors };
+  }
+
+  /**
+   * Get the target webhook URL with validation
+   */
+  private async getTargetWebhookUrl(
+    providedUrl?: string
+  ): Promise<{ url: string | null; errors: string[] }> {
+    const errors: string[] = [];
+
+    const targetUrl = providedUrl || this.buildWebhookUrl();
+    if (!targetUrl) {
+      errors.push('No webhook URL available - cannot establish webhooks');
+    }
+
+    return { url: targetUrl, errors };
+  }
+
+  /**
+   * Create an error status with all required events marked as missing
+   */
+  private createErrorStatus(errors: string[]): WebhookStatus {
+    return {
+      webhooks: [],
+      requiredEvents: [...BTCPayServer.REQUIRED_WEBHOOK_EVENTS],
+      missingEvents: [...BTCPayServer.REQUIRED_WEBHOOK_EVENTS],
+      setupComplete: false,
+      errors,
+    };
+  }
+
+  /**
+   * Get current webhook status for a specific URL
+   */
+  async getWebhookStatus(webhookUrl: string): Promise<WebhookStatus> {
+    const errors: string[] = [];
+    const requiredEvents = [...BTCPayServer.REQUIRED_WEBHOOK_EVENTS];
+
+    try {
+      const existingWebhooks = await this.getWebhooks();
+      if (existingWebhooks.length === 0) {
+        console.log('ℹ️  No existing webhooks found');
+        return {
+          webhooks: [],
+          requiredEvents,
+          missingEvents: requiredEvents,
+          setupComplete: false,
+          errors,
+        };
+      }
+
+      // Find webhooks that match our URL
+      const ourWebhooks = existingWebhooks.filter((webhook) => webhook.url === webhookUrl);
+
+      if (ourWebhooks.length === 0) {
+        console.log(`ℹ️  No webhooks found for URL: ${webhookUrl}`);
+        return {
+          webhooks: existingWebhooks,
+          requiredEvents,
+          missingEvents: requiredEvents,
+          setupComplete: false,
+          errors,
+        };
+      }
+
+      // Check which events are covered by existing webhooks
+      const coveredEvents = new Set<string>();
+      ourWebhooks.forEach((webhook) => {
+        if (webhook.active) {
+          webhook.events.forEach((event) => coveredEvents.add(event));
+        }
+      });
+
+      const missingEvents = requiredEvents.filter((event) => !coveredEvents.has(event));
+
+      console.log(
+        `📊 Webhook status: ${coveredEvents.size}/${requiredEvents.length} events covered`
+      );
+      if (missingEvents.length > 0) {
+        console.log(`⚠️  Missing events: ${missingEvents.join(', ')}`);
+      }
+
+      return {
+        webhooks: existingWebhooks,
+        requiredEvents,
+        missingEvents,
+        setupComplete: missingEvents.length === 0,
+        errors,
+      };
+    } catch (error) {
+      const errorMsg = `Failed to check webhook status: ${error instanceof Error ? error.message : String(error)}`;
+      console.error(`❌ ${errorMsg}`);
+      errors.push(errorMsg);
+      return {
+        webhooks: [],
+        requiredEvents,
+        missingEvents: requiredEvents,
+        setupComplete: false,
+        errors,
+      };
+    }
+  }
+
+  /**
+   * Create a webhook for specific events
+   */
+  private async createWebhookForEvents(
+    webhookUrl: string,
+    events: string[]
+  ): Promise<{ success: boolean; errors: string[] }> {
+    const errors: string[] = [];
+
+    if (events.length === 0) {
+      console.log('ℹ️  No events to create webhook for');
+      return { success: true, errors };
+    }
+
+    try {
+      const storeId = await this.getFirstStoreId();
+      if (!storeId) {
+        const errorMsg = 'Cannot create webhook: no valid store ID available';
+        console.error(`❌ ${errorMsg}`);
+        errors.push(errorMsg);
+        return { success: false, errors };
+      }
+
+      const webhookData: WebhookCreationData = {
+        enabled: true,
+        automaticRedelivery: true,
+        url: webhookUrl,
+        authorizedEvents: {
+          everything: false,
+          specificEvents: events,
+        },
+        secret: this.generateWebhookSecret(),
+      };
+
+      console.log(`📡 Creating webhook for events: ${events.join(', ')}`);
+      const response = await this.client!.post(`/api/v1/stores/${storeId}/webhooks`, webhookData);
+
+      if (response.status === 200) {
+        console.log(`✅ Successfully created webhook for events: ${events.join(', ')}`);
+
+        // Store webhook configuration in database for signature validation
+        try {
+          const db = getDatabase();
+          const insertStmt = db.prepare(`
+            INSERT OR REPLACE INTO webhook_configs (id, url, secret, events, active, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `);
+
+          insertStmt.run(
+            response.data.id,
+            webhookData.url,
+            webhookData.secret,
+            JSON.stringify(events),
+            webhookData.enabled ? 1 : 0 // Convert boolean to integer for SQLite
+          );
+
+          console.log(`💾 Stored webhook config for validation: ${response.data.id}`);
+        } catch (error) {
+          console.error('Failed to store webhook config:', error);
+          // Don't fail the webhook creation if we can't store the config
+        }
+
+        return { success: true, errors };
+      } else {
+        const errorMsg = `Unexpected response status when creating webhook: ${response.status}`;
+        console.error(`❌ ${errorMsg}`);
+        errors.push(errorMsg);
+        return { success: false, errors };
+      }
+    } catch (error) {
+      const errorMsg = `Failed to create webhook for events ${events.join(', ')}: ${error instanceof Error ? error.message : String(error)}`;
+      console.error(`❌ ${errorMsg}`);
+      errors.push(errorMsg);
+      return { success: false, errors };
+    }
+  }
+
+  /**
+   * Update an existing webhook
+   */
+  async updateWebhook(webhookId: string, updates: Partial<WebhookCreationData>): Promise<boolean> {
+    try {
+      const storeId = await this.getFirstStoreId();
+      if (!storeId) {
+        console.error('Cannot update webhook: no valid store ID available');
+        return false;
+      }
+
+      console.log(`📝 Updating webhook: ${webhookId}`);
+      const response = await this.client!.put(
+        `/api/v1/stores/${storeId}/webhooks/${webhookId}`,
+        updates
+      );
+
+      if (response.status === 200) {
+        console.log(`✅ Successfully updated webhook: ${webhookId}`);
+        return true;
+      } else {
+        console.error(`❌ Unexpected response status when updating webhook: ${response.status}`);
+        return false;
+      }
+    } catch (error) {
+      console.error(`❌ Failed to update webhook ${webhookId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Delete a webhook
+   */
+  async deleteWebhook(webhookId: string): Promise<boolean> {
+    try {
+      const storeId = await this.getFirstStoreId();
+      if (!storeId) {
+        console.error('Cannot delete webhook: no valid store ID available');
+        return false;
+      }
+
+      console.log(`🗑️  Deleting webhook: ${webhookId}`);
+      const response = await this.client!.delete(`/api/v1/stores/${storeId}/webhooks/${webhookId}`);
+
+      if (response.status === 200) {
+        console.log(`✅ Successfully deleted webhook: ${webhookId}`);
+        return true;
+      } else {
+        console.error(`❌ Unexpected response status when deleting webhook: ${response.status}`);
+        return false;
+      }
+    } catch (error) {
+      console.error(`❌ Failed to delete webhook ${webhookId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Build the webhook URL for this application
+   */
+  buildWebhookUrl(): string | null {
+    try {
+      // For BTCPayServer webhooks, we need to use an internal network URL
+      // since BTCPayServer runs in Docker and can't reach onion URLs directly
+      let baseUrl: string;
+
+      // Check if we're in a Docker environment (detect by common Docker network patterns)
+      const isDockerEnvironment =
+        process.env.BTCPAY_SERVER_URL?.includes('umbrel.local') ||
+        process.env.BTCPAY_SERVER_URL?.includes('172.17.') ||
+        process.env.BTCPAY_SERVER_URL?.includes('192.168.') ||
+        process.env.BTCPAY_SERVER_URL?.includes('10.') ||
+        process.env.HOSTNAME?.includes('docker') ||
+        process.env.NODE_ENV === 'production';
+
+      if (isDockerEnvironment) {
+        // In Umbrel environment, use the full container name since Docker containers can reach each other by full name
+        // Our container is typically named 'sovereign-merchant_web_1'
+        baseUrl = `http://sovereign-merchant_web_1:${process.env.PORT || 4001}`;
+        console.log('🐳 Umbrel environment detected, using full container name for webhooks');
+      } else {
+        // Fall back to external URLs for non-Docker environments
+        baseUrl =
+          process.env.APP_HIDDEN_SERVICE ||
+          process.env.APP_DOMAIN ||
+          `http://localhost:${process.env.PORT || 3000}`;
+
+        // If APP_HIDDEN_SERVICE is a placeholder (like "not-enabled.onion"), don't use it
+        if (baseUrl.includes('not-enabled') || baseUrl.includes('placeholder')) {
+          baseUrl = `http://localhost:${process.env.PORT || 3000}`;
+          console.warn(
+            '⚠️ APP_HIDDEN_SERVICE appears to be a placeholder, falling back to localhost'
+          );
+        }
+      }
+
+      // Ensure we have a valid protocol
+      if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+        baseUrl = `http://${baseUrl}`;
+      }
+
+      const webhookUrl = `${baseUrl}/api/webhooks/btcpay`;
+      console.log(`🔗 Built webhook URL: ${webhookUrl}`);
+      return webhookUrl;
+    } catch (error) {
+      console.error('Failed to build webhook URL:', error);
+      return null;
     }
   }
 }

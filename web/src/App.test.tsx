@@ -118,9 +118,7 @@ describe('App', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Setup Status')).toBeInTheDocument();
-        expect(
-          screen.getByText('⚠️ Authenticated with BTCPayServer, connect QuickBooks')
-        ).toBeInTheDocument();
+        expect(screen.getByText('❌ Webhooks not configured')).toBeInTheDocument();
       });
     });
 
@@ -149,9 +147,9 @@ describe('App', () => {
       const refreshButton = screen.getByText('Refresh Status');
       fireEvent.click(refreshButton);
 
-      // Should call APIs again
+      // Should call APIs again (initial + refresh)
       await waitFor(() => {
-        expect(mockedAxios.get).toHaveBeenCalledTimes(6); // Initial + refresh calls
+        expect(mockedAxios.get).toHaveBeenCalledTimes(8);
       });
     });
   });
@@ -196,9 +194,13 @@ describe('App', () => {
         });
       });
 
-      // Should show success modal
+      // Should show success modal with webhook establishment message
       expect(screen.getByText('✅ Success!')).toBeInTheDocument();
-      expect(screen.getByText('BTCPayServer API key saved successfully!')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'Webhooks established successfully! Your BTCPayServer will now automatically send payment notifications.'
+        )
+      ).toBeInTheDocument();
     });
 
     it('should show error for empty API key', async () => {
