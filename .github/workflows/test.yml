@@ -46,6 +46,15 @@ jobs:
         path: core/coverage/junit.xml
         retention-days: 1
 
+    - name: Upload coverage files
+      uses: actions/upload-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: core-coverage
+        path: core/coverage/coverage-summary.json
+        retention-days: 1
+
   test-web:
     name: Test Web (Frontend)
     runs-on: ubuntu-latest
@@ -85,6 +94,15 @@ jobs:
         path: web/coverage/junit.xml
         retention-days: 1
 
+    - name: Upload coverage files
+      uses: actions/upload-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: web-coverage
+        path: web/coverage/coverage-summary.json
+        retention-days: 1
+
   coverage-comment:
     name: Comment Coverage
     runs-on: ubuntu-latest
@@ -115,6 +133,22 @@ jobs:
         name: web-test-results
         path: web/coverage/
 
+    - name: Download core coverage
+      uses: actions/download-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: core-coverage
+        path: core/coverage/
+
+    - name: Download web coverage
+      uses: actions/download-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: web-coverage
+        path: web/coverage/
+
     - name: Coverage Comment
       uses: dorny/test-reporter@v1
       if: success() || failure()
@@ -127,3 +161,29 @@ jobs:
         comment-mode: always
         list-suites: all
         list-tests: all
+
+    - name: Coverage Report - Core
+      uses: davelosert/vitest-coverage-report-action@v1
+      if: success() || failure()
+      continue-on-error: true
+      with:
+        coverage-file: 'core/coverage/coverage-summary.json'
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        threshold-branch: 80
+        threshold-line: 80
+        threshold-function: 80
+        threshold-statement: 80
+        title: 'Coverage Report (Backend)'
+
+    - name: Coverage Report - Web
+      uses: davelosert/vitest-coverage-report-action@v1
+      if: success() || failure()
+      continue-on-error: true
+      with:
+        coverage-file: 'web/coverage/coverage-summary.json'
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        threshold-branch: 80
+        threshold-line: 80
+        threshold-function: 80
+        threshold-statement: 80
+        title: 'Coverage Report (Frontend)'
