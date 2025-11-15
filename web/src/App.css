@@ -879,6 +879,174 @@
   opacity: 0.9;
 }
 
+/* Webhook Status Styles */
+.webhook-status-info {
+  margin-bottom: 1rem;
+}
+
+.webhook-establish-error {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 4px;
+}
+
+.webhook-establish-error p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.webhook-errors {
+  margin-top: 0.5rem;
+}
+
+.webhook-errors small {
+  display: block;
+  color: #ef4444 !important;
+  opacity: 1 !important;
+}
+
+/* Permission Warning Styles */
+.permission-warning {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 6px;
+  border-left: 4px solid #f59e0b;
+}
+
+.permission-warning p {
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.permission-warning small {
+  color: #92400e;
+  opacity: 0.9;
+}
+
+.permission-warning .link-button {
+  background: none;
+  border: none;
+  color: #dc2626;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+}
+
+.permission-warning .link-button:hover {
+  color: #b91c1c;
+}
+
+/* Warning Box in Instructions */
+.warning-box {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 4px;
+  border-left: 4px solid #ef4444;
+}
+
+.warning-box strong {
+  color: #dc2626;
+}
+
+/* Webhook Events Styles */
+.webhook-events-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.webhook-event-item {
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.webhook-event-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.webhook-event-type {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.webhook-event-type.invoicecreated {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.webhook-event-type.invoicereceivedpayment {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.webhook-event-type.invoiceprocessing {
+  background: #fde68a;
+  color: #92400e;
+}
+
+.webhook-event-type.invoiceexpired {
+  background: #fecaca;
+  color: #dc2626;
+}
+
+.webhook-event-type.invoicesettled {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.webhook-event-type.invoiceinvalid {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.webhook-event-type.invoicepaymentsettled {
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.webhook-event-time {
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.webhook-event-details {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: #4b5563;
+}
+
+.webhook-event-details span {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.webhook-more-indicator {
+  text-align: center;
+  font-style: italic;
+  color: #6b7280;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #e5e7eb;
+}
+
 @media (min-width: 600px) {
   .qb-data {
     grid-template-columns: 1fr 1fr;

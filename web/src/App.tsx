@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import './App.css';
 import axios from 'axios';
+import { useWebhookManagement } from './hooks/useWebhookManagement';
 
 interface BTCPayStatus {
   connected: boolean;
@@ -58,6 +59,20 @@ interface SettledInvoicesResponse {
   error?: string;
 }
 
+interface WebhookEvent {
+  id: string;
+  event_type: string;
+  invoice_id: string | null;
+  store_id: string | null;
+  processed: number;
+  created_at: string;
+}
+
+interface WebhookEventsResponse {
+  events: WebhookEvent[];
+  error?: string;
+}
+
 function App() {
   const [btcpayStatus, setBtcpayStatus] = useState<BTCPayStatus | null>(null);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
@@ -69,10 +84,31 @@ function App() {
   const [settledInvoices, setSettledInvoices] = useState<SettledInvoice[]>([]);
   const [settledInvoicesError, setSettledInvoicesError] = useState<string | null>(null);
   const [settledInvoicesLoading, setSettledInvoicesLoading] = useState(false);
+  const [webhookEvents, setWebhookEvents] = useState<WebhookEvent[]>([]);
+  const [webhookEventsError, setWebhookEventsError] = useState<string | null>(null);
+  const [webhookEventsLoading, setWebhookEventsLoading] = useState(false);
   const [showApiKeyForm, setShowApiKeyForm] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('BTCPayServer API key saved successfully!');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+
+  // Success modal callback function
+  const showSuccessModalWithMessage = (message: string) => {
+    setSuccessMessage(message);
+    setShowSuccessModal(true);
+  };
+
+  // Webhook management hook
+  const {
+    webhookStatus,
+    webhookStatusLoading,
+    webhookEstablishError,
+    establishWebhooks,
+    establishWebhooksWithFeedback,
+    checkWebhookStatus,
+    clearWebhookStatus,
+  } = useWebhookManagement({ showSuccessModal: showSuccessModalWithMessage });
 
   useEffect(() => {
     initializeApp();
@@ -87,7 +123,19 @@ function App() {
       await checkBtcpayStatus();
       await checkConfigStatus();
       await fetchWebhooks();
+      await checkWebhookStatus();
       await fetchSettledInvoices();
+      await fetchWebhookEvents();
+
+      // Automatically establish webhooks if BTCPayServer is available and authenticated
+      // Use the status we already fetched in checkBtcpayStatus
+      if (btcpayStatus?.authenticated && !webhookStatus?.setupComplete) {
+        const result = await establishWebhooks();
+        if (result.success) {
+          // Immediately refresh webhook status to update UI
+          await checkWebhookStatus();
+        }
+      }
     } else {
       // Set default states when no API key is configured
       setBtcpayStatus({ connected: false, authenticated: false });
@@ -193,7 +241,25 @@ function App() {
     }
   };
 
-  const saveApiKey = async () => {
+  const fetchWebhookEvents = async () => {
+    setWebhookEventsLoading(true);
+    setWebhookEventsError(null);
+    try {
+      const response = await axios.get<WebhookEventsResponse>('/api/webhook-events');
+      setWebhookEvents(response.data.events || []);
+    } catch (error) {
+      console.error('Failed to fetch webhook events:', error);
+      let errorMessage = 'Failed to fetch webhook events';
+      if (axios.isAxiosError(error)) {
+        errorMessage = error.response?.data?.error || errorMessage;
+      }
+      setWebhookEventsError(errorMessage);
+    } finally {
+      setWebhookEventsLoading(false);
+    }
+  };
+
+  const saveBtcpayApiKey = async () => {
     if (!apiKeyInput.trim()) {
       alert('Please enter a valid API key');
       return;
@@ -203,9 +269,17 @@ function App() {
       await axios.post('/api/btcpay/api-key', { apiKey: apiKeyInput.trim() });
       setApiKeyInput('');
       setShowApiKeyForm(false);
-      setShowSuccessModal(true);
-      // Refresh all statuses
+      showSuccessModalWithMessage('BTCPayServer API key saved successfully!');
+
+      // Clear webhook status since API key changed (old webhooks are invalid)
+      clearWebhookStatus();
+
+      // Refresh all statuses and automatically establish webhooks
       await initializeApp();
+      // Automatically establish webhooks after API key is set
+      await establishWebhooksWithFeedback();
+      // Refresh webhook status one final time to ensure UI is up-to-date
+      await checkWebhookStatus();
     } catch (error) {
       console.error('Failed to save API key:', error);
       alert('Failed to save API key. Check console for details.');
@@ -301,27 +375,42 @@ function App() {
                     <div>
                       <p
                         className={
-                          configStatus.setupComplete && configStatus.quickbooksConfigured
+                          configStatus.setupComplete &&
+                          configStatus.quickbooksConfigured &&
+                          webhookStatus?.setupComplete
                             ? 'status-good'
-                            : btcpayStatus?.authenticated
+                            : btcpayStatus?.authenticated && webhookStatus?.setupComplete
                               ? 'status-warning'
-                              : 'status-error'
+                              : btcpayStatus?.authenticated
+                                ? 'status-error'
+                                : 'status-error'
                         }
                       >
-                        {configStatus.setupComplete && configStatus.quickbooksConfigured
+                        {configStatus.setupComplete &&
+                        configStatus.quickbooksConfigured &&
+                        webhookStatus?.setupComplete
                           ? '✅ Fully Configured'
-                          : btcpayStatus?.authenticated
+                          : btcpayStatus?.authenticated && webhookStatus?.setupComplete
                             ? '⚠️ Authenticated with BTCPayServer, connect QuickBooks'
-                            : !apiKeyStatus?.configured
-                              ? '❌ Set up BTCPayServer connection'
-                              : btcpayStatus?.connected
-                                ? '❌ Update BTCPayServer API key'
-                                : '❌ BTCPayServer connection issue'}
+                            : btcpayStatus?.authenticated &&
+                                webhookStatus?.errors?.some(
+                                  (error) =>
+                                    error.includes('permission') || error.includes('view stores')
+                                )
+                              ? '❌ API key missing required permissions'
+                              : btcpayStatus?.authenticated
+                                ? '❌ Webhooks not configured'
+                                : !apiKeyStatus?.configured
+                                  ? '❌ Set up BTCPayServer connection'
+                                  : btcpayStatus?.connected
+                                    ? '❌ Update BTCPayServer API key'
+                                    : '❌ BTCPayServer connection issue'}
                       </p>
                       <small>
                         BTCPay Server: {btcpayStatus?.connected ? '✅' : '❌'} | API Key:{' '}
-                        {btcpayStatus?.authenticated ? '✅' : '❌'} | QuickBooks:{' '}
-                        {configStatus.quickbooksConfigured ? '✅' : '❌'}
+                        {btcpayStatus?.authenticated ? '✅' : '❌'} | Webhooks:{' '}
+                        {webhookStatus?.setupComplete ? '✅' : webhookStatus ? '❌' : '?'} |
+                        QuickBooks: {configStatus.quickbooksConfigured ? '✅' : '❌'}
                       </small>
                     </div>
                   ) : (
@@ -333,8 +422,11 @@ function App() {
                   <h3>
                     Webhooks
                     <button
-                      onClick={fetchWebhooks}
-                      disabled={webhookLoading}
+                      onClick={async () => {
+                        await fetchWebhooks();
+                        await checkWebhookStatus();
+                      }}
+                      disabled={webhookLoading || webhookStatusLoading}
                       className="refresh-webhooks-btn"
                       title="Refresh webhooks"
                       aria-label="Refresh webhook list"
@@ -342,6 +434,77 @@ function App() {
                       🔄
                     </button>
                   </h3>
+
+                  {/* Webhook Status */}
+                  {webhookStatusLoading ? (
+                    <p>Loading webhook status...</p>
+                  ) : webhookStatus ? (
+                    <div className="webhook-status-info">
+                      <p className={webhookStatus.setupComplete ? 'status-good' : 'status-warning'}>
+                        {webhookStatus.setupComplete ? '✅' : '⚠️'} Webhook Setup:{' '}
+                        {webhookStatus.setupComplete ? 'Complete' : 'Incomplete'}
+                      </p>
+                      <small>
+                        Events:{' '}
+                        {webhookStatus.requiredEvents.length - webhookStatus.missingEvents.length}/
+                        {webhookStatus.requiredEvents.length} configured
+                        {webhookStatus.missingEvents.length > 0 && (
+                          <span className="status-error">
+                            {' '}
+                            ({webhookStatus.missingEvents.length} missing)
+                          </span>
+                        )}
+                      </small>
+
+                      {webhookStatus.errors.length > 0 && (
+                        <div className="webhook-errors">
+                          <small className="status-error">
+                            Errors: {webhookStatus.errors.join('; ')}
+                          </small>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="status-warning">⚠️ Unable to check webhook status</p>
+                  )}
+
+                  {/* Permission Error Warning */}
+                  {btcpayStatus?.authenticated &&
+                    webhookStatus?.errors?.some(
+                      (error) =>
+                        error.includes('permission') ||
+                        error.includes('view stores') ||
+                        error.includes('store')
+                    ) && (
+                      <div className="permission-warning">
+                        <p className="status-error">⚠️ API Key Missing Required Permissions</p>
+                        <small>
+                          Your API key needs <code>btcpay.store.canviewstoresettings</code>{' '}
+                          permission to access stores.
+                          <br />
+                          Please update your API key in BTCPayServer settings with all required
+                          permissions.
+                          <button
+                            onClick={() => setShowApiKeyForm(true)}
+                            className="link-button"
+                            style={{ marginLeft: '8px' }}
+                          >
+                            Update API Key
+                          </button>
+                        </small>
+                      </div>
+                    )}
+
+                  {/* Automatic Webhook Status */}
+                  {webhookEstablishError && btcpayStatus?.authenticated && (
+                    <div className="webhook-establish-error">
+                      <p className="status-error">
+                        ❌ Webhook setup failed: {webhookEstablishError}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Webhook List */}
                   {webhookLoading ? (
                     <p>Loading webhooks...</p>
                   ) : webhookError ? (
@@ -427,6 +590,60 @@ function App() {
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Webhook Events */}
+                <div className="status-card">
+                  <h3>
+                    Recent Webhook Events
+                    <button
+                      onClick={fetchWebhookEvents}
+                      disabled={webhookEventsLoading}
+                      className="refresh-webhooks-btn"
+                      title="Refresh webhook events"
+                      aria-label="Refresh webhook events list"
+                    >
+                      🔄
+                    </button>
+                  </h3>
+                  {webhookEventsLoading ? (
+                    <p>Loading webhook events...</p>
+                  ) : webhookEventsError ? (
+                    <div className="webhook-error">
+                      <p className="status-error">❌ {webhookEventsError}</p>
+                    </div>
+                  ) : webhookEvents.length === 0 ? (
+                    <p>
+                      No webhook events received yet. Try sending a test webhook from BTCPayServer.
+                    </p>
+                  ) : (
+                    <div className="webhook-events-list">
+                      {webhookEvents.slice(0, 10).map((event) => (
+                        <div key={event.id} className="webhook-event-item">
+                          <div className="webhook-event-header">
+                            <span
+                              className={`webhook-event-type ${event.event_type.toLowerCase()}`}
+                            >
+                              {event.event_type}
+                            </span>
+                            <span className="webhook-event-time">
+                              {new Date(event.created_at).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="webhook-event-details">
+                            <span>Invoice: {event.invoice_id || 'N/A'}</span>
+                            <span>Store: {event.store_id || 'N/A'}</span>
+                            <span>Processed: {event.processed ? '✅' : '⏳'}</span>
+                          </div>
+                        </div>
+                      ))}
+                      {webhookEvents.length > 10 && (
+                        <p className="webhook-more-indicator">
+                          ... and {webhookEvents.length - 10} more events
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -525,6 +742,12 @@ function App() {
                 </p>
                 <ul className="permissions-list">
                   <li>
+                    View your stores
+                    <div className="permission-code">
+                      <strong>btcpay.store.canviewstoresettings</strong>
+                    </div>
+                  </li>
+                  <li>
                     Modify stores webhooks
                     <div className="permission-code">
                       <strong>btcpay.store.webhooks.canmodifywebhooks</strong>
@@ -540,12 +763,24 @@ function App() {
 
                 <div className="instructions">
                   <h4>How to create an API key:</h4>
+                  <p>
+                    <strong>Option 1 (Recommended):</strong> Create an API key with "Unrestricted
+                    access" for full functionality.
+                  </p>
+                  <p>
+                    <strong>Option 2 (Minimal):</strong> Create an API key with these specific
+                    permissions:
+                  </p>
                   <ol>
                     <li>Open BTCPayServer → API Keys</li>
                     <li>Click "Generate Key"</li>
-                    <li>Select the permissions above</li>
+                    <li>Select all permissions listed above, or choose "Unrestricted access"</li>
                     <li>Copy the generated key</li>
                   </ol>
+                  <div className="warning-box">
+                    <strong>⚠️ Important:</strong> Without proper permissions, Sovereign Merchant
+                    cannot access your stores or create webhooks.
+                  </div>
                 </div>
 
                 <div className="form-group">
@@ -577,7 +812,7 @@ function App() {
                     Cancel
                   </button>
                   <button
-                    onClick={saveApiKey}
+                    onClick={saveBtcpayApiKey}
                     className="primary"
                     aria-label="Save and validate the entered BTCPayServer API key"
                   >
@@ -594,7 +829,7 @@ function App() {
             <div className="modal success-modal">
               <h3>✅ Success!</h3>
               <div className="modal-content">
-                <p>BTCPayServer API key saved successfully!</p>
+                <p>{successMessage}</p>
                 <div className="modal-actions">
                   <button onClick={() => setShowSuccessModal(false)} className="primary">
                     OK

@@ -1,0 +1,471 @@
+name: Test & Coverage
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-core:
+    name: Test Core (Backend)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run tests with coverage
+      working-directory: core
+      run: npm run test:coverage
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      if: success()
+      continue-on-error: true
+      with:
+        file: ./core/coverage/lcov.info
+        flags: backend
+        name: backend-coverage
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
+
+    - name: Verify coverage files exist
+      if: success()
+      working-directory: core
+      run: |
+        echo "Checking for coverage files..."
+        ls -la coverage/ || echo "coverage directory not found"
+        if [ -f "coverage/coverage-final.json" ] && [ -f "coverage/coverage-summary.json" ]; then
+          echo "✅ coverage-final.json and coverage-summary.json found"
+        else
+          echo "::error::Coverage files not found!"
+          echo "Files in coverage directory:"
+          ls -la coverage/ || echo "coverage directory does not exist"
+          exit 1
+        fi
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: core-test-results
+        path: core/coverage/junit.xml
+        retention-days: 1
+        if-no-files-found: error
+
+    - name: Upload coverage files
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: core-coverage
+        path: |
+          core/coverage/coverage-final.json
+          core/coverage/coverage-summary.json
+        retention-days: 1
+        if-no-files-found: error
+
+  test-web:
+    name: Test Web (Frontend)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run tests with coverage
+      working-directory: web
+      run: npm run test:coverage
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      if: success()
+      continue-on-error: true
+      with:
+        file: ./web/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
+
+    - name: Verify coverage files exist
+      if: success()
+      working-directory: web
+      run: |
+        echo "Checking for coverage files..."
+        ls -la coverage/ || echo "coverage directory not found"
+        if [ -f "coverage/coverage-final.json" ] && [ -f "coverage/coverage-summary.json" ]; then
+          echo "✅ coverage-final.json and coverage-summary.json found"
+        else
+          echo "::error::Coverage files not found!"
+          echo "Files in coverage directory:"
+          ls -la coverage/ || echo "coverage directory does not exist"
+          exit 1
+        fi
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: web-test-results
+        path: web/coverage/junit.xml
+        retention-days: 1
+        if-no-files-found: error
+
+    - name: Upload coverage files
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: web-coverage
+        path: |
+          web/coverage/coverage-final.json
+          web/coverage/coverage-summary.json
+        retention-days: 1
+        if-no-files-found: error
+
+  coverage-comment:
+    name: Comment Coverage
+    runs-on: ubuntu-latest
+    needs: [test-core, test-web]
+    if: github.event_name == 'pull_request'
+    permissions:
+      checks: write
+      pull-requests: write
+      contents: read
+    # This job runs even if test jobs fail, but only for reporting
+    # The workflow will still show as failed if test jobs fail
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download core test results
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: core-test-results
+        path: core/coverage/
+
+    - name: Download web test results
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: web-test-results
+        path: web/coverage/
+
+    - name: Download core coverage
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: core-coverage
+        path: core/coverage/
+
+    - name: Download web coverage
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: web-coverage
+        path: web/coverage/
+
+    - name: Verify artifacts downloaded
+      run: |
+        echo "=== Artifact Verification ==="
+        echo "Test-core job result: ${{ needs.test-core.result }}"
+        echo "Test-web job result: ${{ needs.test-web.result }}"
+        
+        MISSING_TEST_RESULTS=0
+        MISSING_COVERAGE=0
+        
+        if [ ! -f "core/coverage/junit.xml" ] && [ ! -f "web/coverage/junit.xml" ]; then
+          echo "::error::❌ CRITICAL: No test result files found!"
+          MISSING_TEST_RESULTS=1
+        fi
+        
+        if [ ! -f "core/coverage/coverage-summary.json" ] && [ ! -f "web/coverage/coverage-summary.json" ]; then
+          echo "::warning::⚠️  WARNING: No coverage-summary.json files found. Coverage reports will be skipped."
+          MISSING_COVERAGE=1
+        fi
+        
+        # Fail if tests passed but artifacts are missing
+        if [ "$MISSING_TEST_RESULTS" -eq 1 ]; then
+          if [ "${{ needs.test-core.result }}" = "success" ] || [ "${{ needs.test-web.result }}" = "success" ]; then
+            echo "::error::Tests passed but test result artifacts are missing! This is a CI configuration bug."
+            echo "::error::Check why artifacts weren't uploaded after successful test runs."
+            exit 1
+          else
+            echo "::warning::Tests failed, so missing artifacts are expected. Skipping reports."
+          fi
+        fi
+        
+        # Fail if tests passed but coverage files are missing
+        if [ "$MISSING_COVERAGE" -eq 1 ]; then
+          if [ "${{ needs.test-core.result }}" = "success" ] || [ "${{ needs.test-web.result }}" = "success" ]; then
+            echo "::error::Tests passed but coverage files are missing! Coverage reporting cannot proceed."
+            echo "::error::Check why coverage-summary.json files weren't generated or uploaded."
+            exit 1
+          else
+            echo "::warning::Tests failed, so missing coverage files are expected. Coverage reports will be skipped."
+          fi
+        fi
+        
+        if [ "$MISSING_TEST_RESULTS" -eq 0 ] && [ "$MISSING_COVERAGE" -eq 0 ]; then
+          echo "✅ All artifacts verified and ready for reporting"
+        fi
+
+    - name: Verify test result files exist
+      if: always()
+      run: |
+        echo "Checking for test result files..."
+        ls -la core/coverage/ || echo "core/coverage/ not found"
+        ls -la web/coverage/ || echo "web/coverage/ not found"
+        find . -name "junit.xml" -type f || echo "No junit.xml files found"
+
+    - name: Test Results Comment
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Test Results
+        path: '*/coverage/junit.xml'
+        reporter: java-junit
+        fail-on-error: false
+        list-suites: all
+        list-tests: all
+        only-summary: false
+
+    - name: Post Combined Coverage Comment
+      if: success() && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const coreSummary = JSON.parse(fs.readFileSync('core/coverage/coverage-summary.json', 'utf8'));
+          const webSummary = JSON.parse(fs.readFileSync('web/coverage/coverage-summary.json', 'utf8'));
+          const coreFinal = JSON.parse(fs.readFileSync('core/coverage/coverage-final.json', 'utf8'));
+          const webFinal = JSON.parse(fs.readFileSync('web/coverage/coverage-final.json', 'utf8'));
+          
+          const formatPercentage = (pct) => pct.toFixed(2) + '%';
+          const getStatus = (pct, threshold) => pct >= threshold ? '🟢' : '🔴';
+          
+          const sha = context.payload.pull_request?.head?.sha || context.sha;
+          
+          const getFileUrl = (filePath, repoOwner, repoName, sha) => {
+            // Extract relative path from absolute path
+            let relativePath = filePath;
+            if (filePath.includes('/core/')) {
+              relativePath = 'core/' + filePath.split('/core/')[1];
+            } else if (filePath.includes('/web/')) {
+              relativePath = 'web/' + filePath.split('/web/')[1];
+            }
+            return `https://github.com/${repoOwner}/${repoName}/blob/${sha}/${relativePath}`;
+          };
+          
+          const getUncoveredLines = (fileCoverage, filePath, sha) => {
+            if (!fileCoverage || !fileCoverage.statementMap) return '';
+            const uncovered = [];
+            Object.keys(fileCoverage.statementMap).forEach(stmtId => {
+              const count = fileCoverage.s[stmtId];
+              if (count === 0) {
+                const stmt = fileCoverage.statementMap[stmtId];
+                uncovered.push(stmt.start.line);
+              }
+            });
+            if (uncovered.length === 0) return '';
+            
+            // Group consecutive lines
+            uncovered.sort((a, b) => a - b);
+            const ranges = [];
+            let start = uncovered[0];
+            let end = uncovered[0];
+            for (let i = 1; i < uncovered.length; i++) {
+              if (uncovered[i] === end + 1) {
+                end = uncovered[i];
+              } else {
+                ranges.push(start === end ? start : `${start}-${end}`);
+                start = end = uncovered[i];
+              }
+            }
+            ranges.push(start === end ? start : `${start}-${end}`);
+            
+            return ranges.slice(0, 10).map(range => {
+              const line = typeof range === 'number' ? range : parseInt(range.split('-')[0]);
+              const fileUrl = getFileUrl(filePath, context.repo.owner, context.repo.repo, sha);
+              return `<a href="${fileUrl}#L${line}">${range}</a>`;
+            }).join(', ') + (ranges.length > 10 ? '...' : '');
+          };
+          
+          const generateFileTable = (summary, final, prefix) => {
+            const files = Object.keys(summary).filter(k => k !== 'total');
+            if (files.length === 0) return '';
+            
+            let table = `<details><summary>File Coverage</summary><table>
+            <thead>
+            <tr>
+            <th align="left">File</th>
+            <th align="right">Stmts</th>
+            <th align="right">% Branch</th>
+            <th align="right">% Funcs</th>
+            <th align="right">% Lines</th>
+            <th align="left">Uncovered Lines</th>
+            </tr>
+            </thead>
+            <tbody>`;
+            
+            files.forEach(filePath => {
+              const fileData = summary[filePath];
+              const fileFinal = final[filePath];
+              let relativePath = filePath;
+              if (filePath.includes('/core/')) {
+                relativePath = 'core/' + filePath.split('/core/')[1];
+              } else if (filePath.includes('/web/')) {
+                relativePath = 'web/' + filePath.split('/web/')[1];
+              }
+              const fileUrl = getFileUrl(filePath, context.repo.owner, context.repo.repo, sha);
+              const uncovered = fileFinal ? getUncoveredLines(fileFinal, filePath, sha) : '';
+              
+              table += `<tr>
+              <td align="left"><a href="${fileUrl}">${relativePath}</a></td>
+              <td align="right">${formatPercentage(fileData.statements.pct)}</td>
+              <td align="right">${formatPercentage(fileData.branches.pct)}</td>
+              <td align="right">${formatPercentage(fileData.functions.pct)}</td>
+              <td align="right">${formatPercentage(fileData.lines.pct)}</td>
+              <td align="left">${uncovered}</td>
+              </tr>`;
+            });
+            
+            table += `</tbody></table></details>`;
+            return table;
+          };
+          
+          const coreTotal = coreSummary.total;
+          const webTotal = webSummary.total;
+          
+          const comment = `## Coverage Summary
+
+          ### Backend (core)
+          <table>
+          <thead>
+          <tr>
+          <th align="center">Status</th>
+          <th align="left">Category</th>
+          <th align="right">Percentage</th>
+          <th align="right">Covered / Total</th>
+          </tr>
+          </thead>
+          <tbody>
+          <tr>
+          <td align="center">${getStatus(coreTotal.lines.pct, 80)}</td>
+          <td align="left">Lines</td>
+          <td align="right">${formatPercentage(coreTotal.lines.pct)} / 80%</td>
+          <td align="right">${coreTotal.lines.covered} / ${coreTotal.lines.total}</td>
+          </tr>
+          <tr>
+          <td align="center">${getStatus(coreTotal.statements.pct, 80)}</td>
+          <td align="left">Statements</td>
+          <td align="right">${formatPercentage(coreTotal.statements.pct)} / 80%</td>
+          <td align="right">${coreTotal.statements.covered} / ${coreTotal.statements.total}</td>
+          </tr>
+          <tr>
+          <td align="center">${getStatus(coreTotal.functions.pct, 80)}</td>
+          <td align="left">Functions</td>
+          <td align="right">${formatPercentage(coreTotal.functions.pct)} / 80%</td>
+          <td align="right">${coreTotal.functions.covered} / ${coreTotal.functions.total}</td>
+          </tr>
+          <tr>
+          <td align="center">${getStatus(coreTotal.branches.pct, 80)}</td>
+          <td align="left">Branches</td>
+          <td align="right">${formatPercentage(coreTotal.branches.pct)} / 80%</td>
+          <td align="right">${coreTotal.branches.covered} / ${coreTotal.branches.total}</td>
+          </tr>
+          </tbody>
+          </table>
+          ${generateFileTable(coreSummary, coreFinal, 'core')}
+
+          ### Frontend (web)
+          <table>
+          <thead>
+          <tr>
+          <th align="center">Status</th>
+          <th align="left">Category</th>
+          <th align="right">Percentage</th>
+          <th align="right">Covered / Total</th>
+          </tr>
+          </thead>
+          <tbody>
+          <tr>
+          <td align="center">${getStatus(webTotal.lines.pct, 80)}</td>
+          <td align="left">Lines</td>
+          <td align="right">${formatPercentage(webTotal.lines.pct)} / 80%</td>
+          <td align="right">${webTotal.lines.covered} / ${webTotal.lines.total}</td>
+          </tr>
+          <tr>
+          <td align="center">${getStatus(webTotal.statements.pct, 80)}</td>
+          <td align="left">Statements</td>
+          <td align="right">${formatPercentage(webTotal.statements.pct)} / 80%</td>
+          <td align="right">${webTotal.statements.covered} / ${webTotal.statements.total}</td>
+          </tr>
+          <tr>
+          <td align="center">${getStatus(webTotal.functions.pct, 80)}</td>
+          <td align="left">Functions</td>
+          <td align="right">${formatPercentage(webTotal.functions.pct)} / 80%</td>
+          <td align="right">${webTotal.functions.covered} / ${webTotal.functions.total}</td>
+          </tr>
+          <tr>
+          <td align="center">${getStatus(webTotal.branches.pct, 80)}</td>
+          <td align="left">Branches</td>
+          <td align="right">${formatPercentage(webTotal.branches.pct)} / 80%</td>
+          <td align="right">${webTotal.branches.covered} / ${webTotal.branches.total}</td>
+          </tr>
+          </tbody>
+          </table>
+          ${generateFileTable(webSummary, webFinal, 'web')}
+
+          <!-- vitest-coverage-report-marker -->`;
+          
+          // Find existing comment and update it, or create new one
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          
+          const botComment = comments.find(comment => 
+            comment.user.type === 'Bot' && 
+            comment.body.includes('vitest-coverage-report-marker')
+          );
+          
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: comment,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment,
+            });
+          }

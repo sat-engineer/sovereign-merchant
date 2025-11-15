@@ -33,6 +33,24 @@ async function startServer() {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
 
+  // Global request logging for debugging
+  fastify.addHook('onRequest', (request, reply, done) => {
+    if (request.url.includes('/webhooks/btcpay')) {
+      console.log(`🌐 WEBHOOK REQUEST RECEIVED: ${request.method} ${request.url}`);
+
+      // Log only safe headers for security
+      const safeHeaders = { ...request.headers };
+      delete safeHeaders.authorization;
+      delete safeHeaders.cookie;
+      delete safeHeaders['x-api-key'];
+      console.log(`🌐 Safe headers:`, JSON.stringify(safeHeaders, null, 2));
+      if (request.headers['btcpay-sig']) {
+        console.log(`🌐 BTCPay signature present`);
+      }
+    }
+    done();
+  });
+
   // Serve the React SPA for the root route
   fastify.get('/', async (request, reply) => {
     console.log('📄 Serving index.html for root route');

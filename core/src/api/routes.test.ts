@@ -3,6 +3,9 @@ import { FastifyInstance } from 'fastify';
 import { apiRoutes } from './routes';
 import { btcpayClient } from '../services/btcpay';
 
+// Note: Webhook reception tests are integration tests and covered by end-to-end testing
+// The core webhook functionality (establishment, status, events) is tested below
+
 // Mock database interface
 interface MockStatement {
   all: ReturnType<typeof vi.fn>;
@@ -31,6 +34,10 @@ vi.mock('../services/btcpay', () => ({
     getWebhooks: vi.fn(),
     getApiKey: vi.fn(),
     setApiKey: vi.fn(),
+    ensureWebhooksEstablished: vi.fn(),
+    syncExistingWebhookSecrets: vi.fn(),
+    getWebhookStatus: vi.fn(),
+    buildWebhookUrl: vi.fn(() => 'http://sovereign-merchant_web_1:4001/api/webhooks/btcpay'),
   },
 }));
 
@@ -328,6 +335,344 @@ describe('API Routes', () => {
       const body = JSON.parse(response.payload);
       expect(body.btcpayConfigured).toBe(false);
       expect(body.setupComplete).toBe(false);
+    });
+  });
+
+  describe('POST /btcpay/webhooks/establish', () => {
+    it('should successfully establish webhooks', async () => {
+      const mockWebhookStatus = {
+        webhooks: [
+          {
+            id: 'webhook_123',
+            url: 'http://sovereign-merchant_web_1:4001/api/webhooks/btcpay',
+            events: ['InvoiceCreated', 'InvoiceSettled'],
+            active: true,
+          },
+        ],
+        requiredEvents: ['InvoiceCreated', 'InvoiceSettled'],
+        missingEvents: [],
+        setupComplete: true,
+        errors: [],
+      };
+
+      mockedBTCPayClient.ensureWebhooksEstablished.mockResolvedValue(mockWebhookStatus);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/btcpay/webhooks/establish',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+      expect(body.status).toEqual(mockWebhookStatus);
+    });
+
+    it('should handle webhook establishment failure', async () => {
+      mockedBTCPayClient.ensureWebhooksEstablished.mockRejectedValue(
+        new Error('Connection failed')
+      );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/btcpay/webhooks/establish',
+      });
+
+      expect(response.statusCode).toBe(500);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(false);
+      expect(body.message).toContain('Unexpected error during webhook establishment');
+    });
+  });
+
+  describe('POST /btcpay/webhooks/sync-secrets', () => {
+    it('should successfully sync webhook secrets', async () => {
+      mockedBTCPayClient.syncExistingWebhookSecrets.mockResolvedValue(undefined);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/btcpay/webhooks/sync-secrets',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+      expect(body.message).toBe('Webhook secrets synced successfully');
+    });
+
+    it('should handle webhook secret sync failure', async () => {
+      mockedBTCPayClient.syncExistingWebhookSecrets.mockRejectedValue(new Error('Sync failed'));
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/btcpay/webhooks/sync-secrets',
+      });
+
+      expect(response.statusCode).toBe(500);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(false);
+      expect(body.message).toBe('Failed to sync webhook secrets');
+    });
+  });
+
+  describe('GET /btcpay/webhooks/status', () => {
+    it('should return webhook status successfully', async () => {
+      const mockWebhookStatus = {
+        webhooks: [
+          {
+            id: 'webhook_123',
+            url: 'http://sovereign-merchant_web_1:4001/api/webhooks/btcpay',
+            events: ['InvoiceCreated', 'InvoiceSettled'],
+            active: true,
+          },
+        ],
+        requiredEvents: ['InvoiceCreated', 'InvoiceSettled'],
+        missingEvents: [],
+        setupComplete: true,
+        errors: [],
+      };
+
+      mockedBTCPayClient.getWebhookStatus.mockResolvedValue(mockWebhookStatus);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/btcpay/webhooks/status',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(true);
+      expect(body.status).toEqual(mockWebhookStatus);
+    });
+
+    it('should handle webhook status check failure', async () => {
+      mockedBTCPayClient.getWebhookStatus.mockRejectedValue(new Error('Status check failed'));
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/btcpay/webhooks/status',
+      });
+
+      expect(response.statusCode).toBe(500);
+      const body = JSON.parse(response.payload);
+      expect(body.success).toBe(false);
+      expect(body.message).toBe('Failed to get webhook status');
+    });
+  });
+
+  describe('GET /webhook-events', () => {
+    it('should return recent webhook events', async () => {
+      const mockEvents = [
+        {
+          id: 'webhook_123',
+          event_type: 'InvoiceSettled',
+          invoice_id: 'invoice_456',
+          store_id: 'store_789',
+          processed: 0,
+          created_at: '2024-01-15T10:30:00.000Z',
+        },
+      ];
+
+      const mockDb: MockDatabase = {
+        prepare: vi.fn(() => ({
+          all: vi.fn(() => mockEvents),
+        })),
+      };
+      const { getDatabase } = await import('../models/database');
+      vi.mocked(getDatabase).mockReturnValue(mockDb);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/webhook-events',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.events).toEqual(mockEvents);
+    });
+
+    it('should handle database errors when fetching events', async () => {
+      const mockDb: MockDatabase = {
+        prepare: vi.fn(() => {
+          throw new Error('Database error');
+        }),
+      };
+      const { getDatabase } = await import('../models/database');
+      vi.mocked(getDatabase).mockReturnValue(mockDb);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/webhook-events',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.events).toEqual([]);
+      expect(body.error).toBe('Database error');
+    });
+  });
+
+  describe('POST /btcpay/api-key', () => {
+    it('should return 400 for empty API key', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/btcpay/api-key',
+        payload: { apiKey: '' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.payload);
+      expect(body.error).toBe('Valid API key is required');
+    });
+
+    it('should return 400 for missing API key', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/btcpay/api-key',
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.payload);
+      expect(body.error).toBe('Valid API key is required');
+    });
+
+    it('should return 400 for whitespace-only API key', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/btcpay/api-key',
+        payload: { apiKey: '   ' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.payload);
+      expect(body.error).toBe('Valid API key is required');
+    });
+
+    it('should trim API key before saving', async () => {
+      mockedBTCPayClient.setApiKey.mockResolvedValue(undefined);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/btcpay/api-key',
+        payload: { apiKey: '  test-key  ' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockedBTCPayClient.setApiKey).toHaveBeenCalledWith('test-key');
+    });
+
+    it('should handle API key save errors', async () => {
+      mockedBTCPayClient.setApiKey.mockRejectedValue(new Error('Save failed'));
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/btcpay/api-key',
+        payload: { apiKey: 'test-key' },
+      });
+
+      expect(response.statusCode).toBe(500);
+      const body = JSON.parse(response.payload);
+      expect(body.error).toContain('Failed to save API key');
+    });
+  });
+
+  describe('POST /webhooks/btcpay', () => {
+    it('should handle missing signature header', async () => {
+      const payload = JSON.stringify({ type: 'InvoiceSettled', invoiceId: 'test123' });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/webhooks/btcpay',
+        headers: {
+          'content-type': 'application/json',
+        },
+        payload,
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.payload);
+      expect(body.error).toContain('Missing BTCPay-Sig header');
+    });
+
+    it('should handle webhook when no active webhook config found', async () => {
+      const payload = JSON.stringify({ type: 'InvoiceSettled', invoiceId: 'test123' });
+      const { getDatabase } = await import('../models/database');
+      const mockDb: MockDatabase = {
+        prepare: vi.fn(() => ({
+          all: vi.fn(() => []),
+          get: vi.fn(() => null),
+        })),
+      };
+      vi.mocked(getDatabase).mockReturnValue(mockDb);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/webhooks/btcpay',
+        headers: {
+          'content-type': 'application/json',
+          'btcpay-sig': 'test-signature',
+        },
+        payload,
+      });
+
+      expect(response.statusCode).toBe(500);
+      const body = JSON.parse(response.payload);
+      expect(body.error).toContain('Webhook secret not configured');
+    });
+  });
+
+  describe('GET /settled-invoices', () => {
+    it('should handle empty invoice list', async () => {
+      const mockDb: MockDatabase = {
+        prepare: vi.fn(() => ({
+          all: vi.fn(() => []),
+        })),
+      };
+      const { getDatabase } = await import('../models/database');
+      vi.mocked(getDatabase).mockReturnValue(mockDb);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/settled-invoices',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.invoices).toEqual([]);
+    });
+
+    it('should handle invoice with null quickbooks_transaction_id', async () => {
+      const mockSettledInvoices = [
+        {
+          id: 'webhook_123',
+          invoice_id: 'invoice_456',
+          store_id: 'store_789',
+          payload: JSON.stringify({
+            metadata: { amount: '100.00', currency: 'USD' },
+          }),
+          created_at: '2024-01-15T10:30:00.000Z',
+          quickbooks_status: 'pending',
+          quickbooks_transaction_id: null,
+        },
+      ];
+
+      const mockDb: MockDatabase = {
+        prepare: vi.fn(() => ({
+          all: vi.fn(() => mockSettledInvoices),
+        })),
+      };
+      const { getDatabase } = await import('../models/database');
+      vi.mocked(getDatabase).mockReturnValue(mockDb);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/settled-invoices',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.invoices[0].quickbooksTransactionId).toBeNull();
     });
   });
 });
