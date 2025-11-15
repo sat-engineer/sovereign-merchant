@@ -40,6 +40,21 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
 
+    - name: Verify coverage files exist
+      if: success()
+      working-directory: core
+      run: |
+        echo "Checking for coverage files..."
+        ls -la coverage/ || echo "coverage directory not found"
+        if [ -f "coverage/coverage-final.json" ]; then
+          echo "✅ coverage-final.json found"
+        else
+          echo "::error::coverage-final.json not found!"
+          echo "Files in coverage directory:"
+          ls -la coverage/ || echo "coverage directory does not exist"
+          exit 1
+        fi
+
     - name: Upload test results
       uses: actions/upload-artifact@v4
       if: success()
@@ -47,14 +62,16 @@ jobs:
         name: core-test-results
         path: core/coverage/junit.xml
         retention-days: 1
-        if-no-files-found: warn
+        if-no-files-found: error
 
     - name: Upload coverage files
       uses: actions/upload-artifact@v4
       if: success()
       with:
         name: core-coverage
-        path: core/coverage/coverage-summary.json
+        path: |
+          core/coverage/coverage-final.json
+          core/coverage/coverage-summary.json
         retention-days: 1
         if-no-files-found: warn
 
@@ -91,6 +108,21 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
 
+    - name: Verify coverage files exist
+      if: success()
+      working-directory: web
+      run: |
+        echo "Checking for coverage files..."
+        ls -la coverage/ || echo "coverage directory not found"
+        if [ -f "coverage/coverage-final.json" ]; then
+          echo "✅ coverage-final.json found"
+        else
+          echo "::error::coverage-final.json not found!"
+          echo "Files in coverage directory:"
+          ls -la coverage/ || echo "coverage directory does not exist"
+          exit 1
+        fi
+
     - name: Upload test results
       uses: actions/upload-artifact@v4
       if: success()
@@ -98,14 +130,16 @@ jobs:
         name: web-test-results
         path: web/coverage/junit.xml
         retention-days: 1
-        if-no-files-found: warn
+        if-no-files-found: error
 
     - name: Upload coverage files
       uses: actions/upload-artifact@v4
       if: success()
       with:
         name: web-coverage
-        path: web/coverage/coverage-summary.json
+        path: |
+          web/coverage/coverage-final.json
+          web/coverage/coverage-summary.json
         retention-days: 1
         if-no-files-found: warn
 
@@ -167,8 +201,8 @@ jobs:
           MISSING_TEST_RESULTS=1
         fi
         
-        if [ ! -f "core/coverage/coverage-summary.json" ] && [ ! -f "web/coverage/coverage-summary.json" ]; then
-          echo "::warning::⚠️  WARNING: No coverage files found. Coverage reports will be skipped."
+        if [ ! -f "core/coverage/coverage-final.json" ] && [ ! -f "web/coverage/coverage-final.json" ]; then
+          echo "::warning::⚠️  WARNING: No coverage-final.json files found. Coverage reports will be skipped."
           MISSING_COVERAGE=1
         fi
         
@@ -187,7 +221,7 @@ jobs:
         if [ "$MISSING_COVERAGE" -eq 1 ]; then
           if [ "${{ needs.test-core.result }}" = "success" ] || [ "${{ needs.test-web.result }}" = "success" ]; then
             echo "::error::Tests passed but coverage files are missing! Coverage reporting cannot proceed."
-            echo "::error::Check why coverage-summary.json files weren't generated or uploaded."
+            echo "::error::Check why coverage-final.json files weren't generated or uploaded."
             exit 1
           else
             echo "::warning::Tests failed, so missing coverage files are expected. Coverage reports will be skipped."
