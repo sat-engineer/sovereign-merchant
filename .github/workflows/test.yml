@@ -31,10 +31,13 @@ jobs:
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
+      if: always()
+      continue-on-error: true
       with:
         file: ./core/coverage/lcov.info
         flags: backend
         name: backend-coverage
+        token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
 
     - name: Upload test results
@@ -79,10 +82,13 @@ jobs:
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
+      if: always()
+      continue-on-error: true
       with:
         file: ./web/coverage/lcov.info
         flags: frontend
         name: frontend-coverage
+        token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
 
     - name: Upload test results
@@ -149,6 +155,14 @@ jobs:
         name: web-coverage
         path: web/coverage/
 
+    - name: Verify test result files exist
+      if: always()
+      run: |
+        echo "Checking for test result files..."
+        ls -la core/coverage/ || echo "core/coverage/ not found"
+        ls -la web/coverage/ || echo "web/coverage/ not found"
+        find . -name "junit.xml" -type f || echo "No junit.xml files found"
+
     - name: Test Results Comment
       uses: dorny/test-reporter@v1
       if: success() || failure()
@@ -166,23 +180,19 @@ jobs:
       if: success() || failure()
       continue-on-error: true
       with:
-        coverage-file: 'core/coverage/coverage-summary.json'
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        threshold-branch: 80
-        threshold-line: 80
-        threshold-function: 80
-        threshold-statement: 80
-        title: 'Coverage Report (Backend)'
+        vite-config-path: core/vitest.config.mjs
+        json-summary-path: core/coverage/coverage-summary.json
+        json-final-path: core/coverage/coverage-final.json
+        working-directory: core
 
     - name: Coverage Report - Web
       uses: davelosert/vitest-coverage-report-action@v1
       if: success() || failure()
       continue-on-error: true
       with:
-        coverage-file: 'web/coverage/coverage-summary.json'
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        threshold-branch: 80
-        threshold-line: 80
-        threshold-function: 80
-        threshold-statement: 80
-        title: 'Coverage Report (Frontend)'
+        vite-config-path: web/vite.config.ts
+        json-summary-path: web/coverage/coverage-summary.json
+        json-final-path: web/coverage/coverage-final.json
+        working-directory: web
