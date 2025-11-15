@@ -123,3 +123,7 @@ jobs:
         path: '*/coverage/junit.xml'
         reporter: java-junit
         fail-on-error: false
+        comment-on-pr: true
+        comment-mode: always
+        list-suites: all
+        list-tests: all
