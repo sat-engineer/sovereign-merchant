@@ -6,6 +6,10 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     setupFiles: ['./src/test/setup.ts'],
+    reporters: ['verbose', 'junit'],
+    outputFile: {
+      junit: './coverage/junit.xml',
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov'],
