@@ -390,9 +390,10 @@ export class BTCPayServer {
 
   /**
    * Register a webhook for payment notifications
-   * Default events: InvoiceSettled (payment fully confirmed),
-   * InvoiceReceivedPayment (payment received), InvoiceProcessing (payment
-   * confirmed, waiting for blockchain confirmations)
+   * Default events:
+   *  - InvoiceSettled (payment fully confirmed)
+   *  - InvoiceReceivedPayment (payment received)
+   *  - InvoiceProcessing (payment confirmed, waiting for blockchain confirmations)
    */
   async registerWebhook(
     webhookUrl: string,

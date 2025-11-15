@@ -178,7 +178,7 @@ const btcpayRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // Get webhook status
+  // Sync existing webhook secrets
   fastify.post('/webhooks/sync-secrets', async (request, reply) => {
     try {
       console.log('🔄 Syncing webhook secrets...');
@@ -200,6 +200,7 @@ const btcpayRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  // Get webhook status
   fastify.get('/webhooks/status', async (request, reply) => {
     try {
       const { webhookUrl } = request.query as { webhookUrl?: string };

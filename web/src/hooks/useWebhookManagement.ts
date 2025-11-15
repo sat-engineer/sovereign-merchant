@@ -70,15 +70,15 @@ export const useWebhookManagement = (callbacks?: SuccessModalCallbacks) => {
       let errorMessage = 'Failed to establish webhooks';
 
       if (axios.isAxiosError(error)) {
-        if (error.response?.data?.userMessage) {
-          errorMessage = error.response.data.userMessage;
-        } else if (error.response?.data?.message) {
-          errorMessage = error.response.data.message;
-        } else if (error.response?.status === 403) {
+        if (error.response?.status === 403) {
           errorMessage =
             'API key does not have permission to create webhooks. Please check your API key permissions.';
         } else if (error.response?.status === 401) {
           errorMessage = 'API key is invalid or expired.';
+        } else if (error.response?.data?.userMessage) {
+          errorMessage = error.response.data.userMessage;
+        } else if (error.response?.data?.message) {
+          errorMessage = error.response.data.message;
         }
       }
 

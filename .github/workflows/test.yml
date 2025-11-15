@@ -1,0 +1,97 @@
+name: Test & Coverage
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-core:
+    name: Test Core (Backend)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: sovereign-merchant/core/package-lock.json
+
+    - name: Install dependencies
+      working-directory: sovereign-merchant/core
+      run: npm ci
+
+    - name: Run tests with coverage
+      working-directory: sovereign-merchant/core
+      run: npm run test:coverage
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./sovereign-merchant/core/coverage/lcov.info
+        flags: backend
+        name: backend-coverage
+        fail_ci_if_error: false
+
+  test-web:
+    name: Test Web (Frontend)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: sovereign-merchant/web/package-lock.json
+
+    - name: Install dependencies
+      working-directory: sovereign-merchant/web
+      run: npm ci
+
+    - name: Run tests with coverage
+      working-directory: sovereign-merchant/web
+      run: npm run test:coverage
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./sovereign-merchant/web/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+        fail_ci_if_error: false
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        directory: ./sovereign-merchant/web/coverage/
+        flags: frontend
+        name: frontend-coverage
+        fail_ci_if_error: false
+
+  coverage-comment:
+    name: Comment Coverage
+    runs-on: ubuntu-latest
+    needs: [test-core, test-web]
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Coverage Comment
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Coverage Results
+        path: 'sovereign-merchant/*/coverage/junit.xml'
+        reporter: java-junit
+        fail-on-error: false
