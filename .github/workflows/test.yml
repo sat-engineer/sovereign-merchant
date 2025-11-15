@@ -31,7 +31,7 @@ jobs:
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
-      if: always()
+      if: success()
       continue-on-error: true
       with:
         file: ./core/coverage/lcov.info
@@ -82,7 +82,7 @@ jobs:
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
-      if: always()
+      if: success()
       continue-on-error: true
       with:
         file: ./web/coverage/lcov.info
@@ -118,6 +118,8 @@ jobs:
       checks: write
       pull-requests: write
       contents: read
+    # This job runs even if test jobs fail, but only for reporting
+    # The workflow will still show as failed if test jobs fail
 
     steps:
     - name: Checkout code
