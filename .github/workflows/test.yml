@@ -37,6 +37,15 @@ jobs:
         name: backend-coverage
         fail_ci_if_error: false
 
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: core-test-results
+        path: core/coverage/junit.xml
+        retention-days: 1
+
   test-web:
     name: Test Web (Frontend)
     runs-on: ubuntu-latest
@@ -67,6 +76,15 @@ jobs:
         name: frontend-coverage
         fail_ci_if_error: false
 
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: web-test-results
+        path: web/coverage/junit.xml
+        retention-days: 1
+
   coverage-comment:
     name: Comment Coverage
     runs-on: ubuntu-latest
@@ -76,6 +94,22 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Download core test results
+      uses: actions/download-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: core-test-results
+        path: core/coverage/
+
+    - name: Download web test results
+      uses: actions/download-artifact@v4
+      if: always()
+      continue-on-error: true
+      with:
+        name: web-test-results
+        path: web/coverage/
 
     - name: Coverage Comment
       uses: dorny/test-reporter@v1
