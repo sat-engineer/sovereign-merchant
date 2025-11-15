@@ -42,21 +42,21 @@ jobs:
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
-      if: always()
-      continue-on-error: true
+      if: success()
       with:
         name: core-test-results
         path: core/coverage/junit.xml
         retention-days: 1
+        if-no-files-found: warn
 
     - name: Upload coverage files
       uses: actions/upload-artifact@v4
-      if: always()
-      continue-on-error: true
+      if: success()
       with:
         name: core-coverage
         path: core/coverage/coverage-summary.json
         retention-days: 1
+        if-no-files-found: warn
 
   test-web:
     name: Test Web (Frontend)
@@ -93,21 +93,21 @@ jobs:
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
-      if: always()
-      continue-on-error: true
+      if: success()
       with:
         name: web-test-results
         path: web/coverage/junit.xml
         retention-days: 1
+        if-no-files-found: warn
 
     - name: Upload coverage files
       uses: actions/upload-artifact@v4
-      if: always()
-      continue-on-error: true
+      if: success()
       with:
         name: web-coverage
         path: web/coverage/coverage-summary.json
         retention-days: 1
+        if-no-files-found: warn
 
   coverage-comment:
     name: Comment Coverage
@@ -127,7 +127,6 @@ jobs:
 
     - name: Download core test results
       uses: actions/download-artifact@v4
-      if: always()
       continue-on-error: true
       with:
         name: core-test-results
@@ -135,7 +134,6 @@ jobs:
 
     - name: Download web test results
       uses: actions/download-artifact@v4
-      if: always()
       continue-on-error: true
       with:
         name: web-test-results
@@ -143,7 +141,6 @@ jobs:
 
     - name: Download core coverage
       uses: actions/download-artifact@v4
-      if: always()
       continue-on-error: true
       with:
         name: core-coverage
@@ -151,11 +148,55 @@ jobs:
 
     - name: Download web coverage
       uses: actions/download-artifact@v4
-      if: always()
       continue-on-error: true
       with:
         name: web-coverage
         path: web/coverage/
+
+    - name: Verify artifacts downloaded
+      run: |
+        echo "=== Artifact Verification ==="
+        echo "Test-core job result: ${{ needs.test-core.result }}"
+        echo "Test-web job result: ${{ needs.test-web.result }}"
+        
+        MISSING_TEST_RESULTS=0
+        MISSING_COVERAGE=0
+        
+        if [ ! -f "core/coverage/junit.xml" ] && [ ! -f "web/coverage/junit.xml" ]; then
+          echo "::error::❌ CRITICAL: No test result files found!"
+          MISSING_TEST_RESULTS=1
+        fi
+        
+        if [ ! -f "core/coverage/coverage-summary.json" ] && [ ! -f "web/coverage/coverage-summary.json" ]; then
+          echo "::warning::⚠️  WARNING: No coverage files found. Coverage reports will be skipped."
+          MISSING_COVERAGE=1
+        fi
+        
+        # Fail if tests passed but artifacts are missing
+        if [ "$MISSING_TEST_RESULTS" -eq 1 ]; then
+          if [ "${{ needs.test-core.result }}" = "success" ] || [ "${{ needs.test-web.result }}" = "success" ]; then
+            echo "::error::Tests passed but test result artifacts are missing! This is a CI configuration bug."
+            echo "::error::Check why artifacts weren't uploaded after successful test runs."
+            exit 1
+          else
+            echo "::warning::Tests failed, so missing artifacts are expected. Skipping reports."
+          fi
+        fi
+        
+        # Fail if tests passed but coverage files are missing
+        if [ "$MISSING_COVERAGE" -eq 1 ]; then
+          if [ "${{ needs.test-core.result }}" = "success" ] || [ "${{ needs.test-web.result }}" = "success" ]; then
+            echo "::error::Tests passed but coverage files are missing! Coverage reporting cannot proceed."
+            echo "::error::Check why coverage-summary.json files weren't generated or uploaded."
+            exit 1
+          else
+            echo "::warning::Tests failed, so missing coverage files are expected. Coverage reports will be skipped."
+          fi
+        fi
+        
+        if [ "$MISSING_TEST_RESULTS" -eq 0 ] && [ "$MISSING_COVERAGE" -eq 0 ]; then
+          echo "✅ All artifacts verified and ready for reporting"
+        fi
 
     - name: Verify test result files exist
       if: always()
@@ -179,8 +220,7 @@ jobs:
 
     - name: Coverage Report - Core
       uses: davelosert/vitest-coverage-report-action@v1
-      if: success() || failure()
-      continue-on-error: true
+      if: success()
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         vite-config-path: core/vitest.config.mjs
@@ -190,8 +230,7 @@ jobs:
 
     - name: Coverage Report - Web
       uses: davelosert/vitest-coverage-report-action@v1
-      if: success() || failure()
-      continue-on-error: true
+      if: success()
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         vite-config-path: web/vite.config.ts
