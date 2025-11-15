@@ -69,11 +69,9 @@ jobs:
       if: success()
       with:
         name: core-coverage
-        path: |
-          core/coverage/coverage-final.json
-          core/coverage/coverage-summary.json
+        path: core/coverage/coverage-final.json
         retention-days: 1
-        if-no-files-found: warn
+        if-no-files-found: error
 
   test-web:
     name: Test Web (Frontend)
@@ -137,11 +135,9 @@ jobs:
       if: success()
       with:
         name: web-coverage
-        path: |
-          web/coverage/coverage-final.json
-          web/coverage/coverage-summary.json
+        path: web/coverage/coverage-final.json
         retention-days: 1
-        if-no-files-found: warn
+        if-no-files-found: error
 
   coverage-comment:
     name: Comment Coverage
@@ -257,9 +253,8 @@ jobs:
       if: success()
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        vite-config-path: core/vitest.config.mjs
-        json-summary-path: core/coverage/coverage-summary.json
-        json-final-path: core/coverage/coverage-final.json
+        vite-config-path: vitest.config.mjs
+        json-final-path: coverage/coverage-final.json
         working-directory: core
 
     - name: Coverage Report - Web
@@ -267,7 +262,6 @@ jobs:
       if: success()
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        vite-config-path: web/vite.config.ts
-        json-summary-path: web/coverage/coverage-summary.json
-        json-final-path: web/coverage/coverage-final.json
+        vite-config-path: vite.config.ts
+        json-final-path: coverage/coverage-final.json
         working-directory: web
