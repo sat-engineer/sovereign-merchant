@@ -4,7 +4,6 @@ import { BTCPayServer } from './btcpay';
 
 // Mock axios
 vi.mock('axios');
-const mockedAxios = vi.mocked(axios);
 const mockedAxiosCreate = vi.mocked(axios.create);
 
 // Create a consistent mock client that can be reused
@@ -12,12 +11,6 @@ const createMockClient = () => ({
   get: vi.fn(),
   post: vi.fn(),
 });
-
-// Mock axios client interface
-interface MockAxiosClient {
-  get: ReturnType<typeof vi.fn>;
-  post: ReturnType<typeof vi.fn>;
-}
 
 // Mock the database module
 vi.mock('../models/database', () => ({
