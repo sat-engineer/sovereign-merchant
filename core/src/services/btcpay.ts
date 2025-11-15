@@ -1,4 +1,4 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { AxiosInstance } from 'axios';
 import dns from 'dns';
 import { getDatabase } from '../models/database';
 

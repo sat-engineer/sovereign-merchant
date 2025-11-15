@@ -56,7 +56,7 @@ describe('Database', () => {
           get: vi.fn(),
         };
       }),
-    } as any;
+    } as MockDatabase;
 
     // Spy on getDatabase and mock its return value
     vi.spyOn(databaseModule, 'getDatabase').mockReturnValue(mockDb);
@@ -76,7 +76,7 @@ describe('Database', () => {
       const tables = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         .all();
-      const tableNames = tables.map((t: any) => t.name);
+      const tableNames = tables.map((t: { name: string }) => t.name);
 
       expect(tableNames).toContain('config');
       expect(tableNames).toContain('reconciliations');
@@ -86,7 +86,7 @@ describe('Database', () => {
 
       // Check that webhook_events table has the correct structure
       const webhookEventsColumns = db.prepare('PRAGMA table_info(webhook_events)').all();
-      const columnNames = webhookEventsColumns.map((c: any) => c.name);
+      const columnNames = webhookEventsColumns.map((c: { name: string }) => c.name);
 
       expect(columnNames).toContain('id');
       expect(columnNames).toContain('event_type');
