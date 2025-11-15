@@ -261,9 +261,101 @@ jobs:
           const fs = require('fs');
           const coreSummary = JSON.parse(fs.readFileSync('core/coverage/coverage-summary.json', 'utf8'));
           const webSummary = JSON.parse(fs.readFileSync('web/coverage/coverage-summary.json', 'utf8'));
+          const coreFinal = JSON.parse(fs.readFileSync('core/coverage/coverage-final.json', 'utf8'));
+          const webFinal = JSON.parse(fs.readFileSync('web/coverage/coverage-final.json', 'utf8'));
           
           const formatPercentage = (pct) => pct.toFixed(2) + '%';
           const getStatus = (pct, threshold) => pct >= threshold ? '🟢' : '🔴';
+          
+          const sha = context.payload.pull_request?.head?.sha || context.sha;
+          
+          const getFileUrl = (filePath, repoOwner, repoName, sha) => {
+            // Extract relative path from absolute path
+            let relativePath = filePath;
+            if (filePath.includes('/core/')) {
+              relativePath = 'core/' + filePath.split('/core/')[1];
+            } else if (filePath.includes('/web/')) {
+              relativePath = 'web/' + filePath.split('/web/')[1];
+            }
+            return `https://github.com/${repoOwner}/${repoName}/blob/${sha}/${relativePath}`;
+          };
+          
+          const getUncoveredLines = (fileCoverage, filePath, sha) => {
+            if (!fileCoverage || !fileCoverage.statementMap) return '';
+            const uncovered = [];
+            Object.keys(fileCoverage.statementMap).forEach(stmtId => {
+              const count = fileCoverage.s[stmtId];
+              if (count === 0) {
+                const stmt = fileCoverage.statementMap[stmtId];
+                uncovered.push(stmt.start.line);
+              }
+            });
+            if (uncovered.length === 0) return '';
+            
+            // Group consecutive lines
+            uncovered.sort((a, b) => a - b);
+            const ranges = [];
+            let start = uncovered[0];
+            let end = uncovered[0];
+            for (let i = 1; i < uncovered.length; i++) {
+              if (uncovered[i] === end + 1) {
+                end = uncovered[i];
+              } else {
+                ranges.push(start === end ? start : `${start}-${end}`);
+                start = end = uncovered[i];
+              }
+            }
+            ranges.push(start === end ? start : `${start}-${end}`);
+            
+            return ranges.slice(0, 10).map(range => {
+              const line = typeof range === 'number' ? range : parseInt(range.split('-')[0]);
+              const fileUrl = getFileUrl(filePath, context.repo.owner, context.repo.repo, sha);
+              return `<a href="${fileUrl}#L${line}">${range}</a>`;
+            }).join(', ') + (ranges.length > 10 ? '...' : '');
+          };
+          
+          const generateFileTable = (summary, final, prefix) => {
+            const files = Object.keys(summary).filter(k => k !== 'total');
+            if (files.length === 0) return '';
+            
+            let table = `<details><summary>File Coverage</summary><table>
+            <thead>
+            <tr>
+            <th align="left">File</th>
+            <th align="right">Stmts</th>
+            <th align="right">% Branch</th>
+            <th align="right">% Funcs</th>
+            <th align="right">% Lines</th>
+            <th align="left">Uncovered Lines</th>
+            </tr>
+            </thead>
+            <tbody>`;
+            
+            files.forEach(filePath => {
+              const fileData = summary[filePath];
+              const fileFinal = final[filePath];
+              let relativePath = filePath;
+              if (filePath.includes('/core/')) {
+                relativePath = 'core/' + filePath.split('/core/')[1];
+              } else if (filePath.includes('/web/')) {
+                relativePath = 'web/' + filePath.split('/web/')[1];
+              }
+              const fileUrl = getFileUrl(filePath, context.repo.owner, context.repo.repo, sha);
+              const uncovered = fileFinal ? getUncoveredLines(fileFinal, filePath, sha) : '';
+              
+              table += `<tr>
+              <td align="left"><a href="${fileUrl}">${relativePath}</a></td>
+              <td align="right">${formatPercentage(fileData.statements.pct)}</td>
+              <td align="right">${formatPercentage(fileData.branches.pct)}</td>
+              <td align="right">${formatPercentage(fileData.functions.pct)}</td>
+              <td align="right">${formatPercentage(fileData.lines.pct)}</td>
+              <td align="left">${uncovered}</td>
+              </tr>`;
+            });
+            
+            table += `</tbody></table></details>`;
+            return table;
+          };
           
           const coreTotal = coreSummary.total;
           const webTotal = webSummary.total;
@@ -307,6 +399,7 @@ jobs:
           </tr>
           </tbody>
           </table>
+          ${generateFileTable(coreSummary, coreFinal, 'core')}
 
           ### Frontend (web)
           <table>
@@ -345,6 +438,7 @@ jobs:
           </tr>
           </tbody>
           </table>
+          ${generateFileTable(webSummary, webFinal, 'web')}
 
           <!-- vitest-coverage-report-marker -->`;
           
