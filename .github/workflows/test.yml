@@ -252,9 +252,26 @@ jobs:
         list-tests: all
         only-summary: false
 
+    - name: Debug core coverage files
+      if: always()
+      run: |
+        echo "Checking core coverage files before report..."
+        ls -la core/coverage/ || echo "core/coverage/ directory not found"
+        if [ -f "core/coverage/coverage-summary.json" ]; then
+          echo "✅ core/coverage/coverage-summary.json exists"
+          head -20 core/coverage/coverage-summary.json
+        else
+          echo "::error::core/coverage/coverage-summary.json NOT FOUND"
+        fi
+        if [ -f "core/coverage/coverage-final.json" ]; then
+          echo "✅ core/coverage/coverage-final.json exists"
+        else
+          echo "::error::core/coverage/coverage-final.json NOT FOUND"
+        fi
+
     - name: Coverage Report - Core
       uses: davelosert/vitest-coverage-report-action@v1
-      if: success()
+      if: success() && needs.test-core.result == 'success'
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         vite-config-path: vitest.config.mjs
@@ -264,7 +281,7 @@ jobs:
 
     - name: Coverage Report - Web
       uses: davelosert/vitest-coverage-report-action@v1
-      if: success()
+      if: success() && needs.test-web.result == 'success'
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         vite-config-path: vite.config.ts
