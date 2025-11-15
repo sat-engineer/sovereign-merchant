@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosInstance, AxiosError } from 'axios';
 import dns from 'dns';
 import { getDatabase } from '../models/database';
 
@@ -374,13 +374,14 @@ export class BTCPayServer {
 
       console.log(`📊 Final result: ${stores.length} stores available`);
       return stores;
-    } catch (error: any) {
-      console.error('❌ Failed to get BTCPayServer stores:', error.message || error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('❌ Failed to get BTCPayServer stores:', errorMessage);
 
-      // Log additional error details
-      if (error.response) {
-        console.error('❌ API Error Response Status:', error.response.status);
-        console.error('❌ API Error Response Data:', JSON.stringify(error.response.data, null, 2));
+      // Log additional error details for Axios errors
+      if (axios.isAxiosError(error)) {
+        console.error('❌ API Error Response Status:', error.response?.status);
+        console.error('❌ API Error Response Data:', JSON.stringify(error.response?.data, null, 2));
       }
 
       throw error;
